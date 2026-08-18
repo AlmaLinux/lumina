@@ -1,0 +1,71 @@
+{% extends "base_public.html" %}
+{% block title %}Benchmarks - AlmaLinux Hardware{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="row align-items-end">
+    <div class="col">
+      <h1 class="page-title">Benchmark leaderboards</h1>
+      <p class="text-secondary mb-0">Community-submitted performance results on AlmaLinux hardware.</p>
+    </div>
+    <div class="col-auto">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'results:benchmarks_feed' %}">
+        <i class="ti ti-rss"></i> Feed
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-7">
+    <div class="card"><div class="list-group list-group-flush">
+      {% comment %}Grouped on ``category_label`` rather than the raw slug, so the heading is
+         the acronym a reader is looking for. ``capfirst`` on the slug gave "Gpu" and "Cpu", and
+         somebody scanning this list for GPU results read straight past it.{% endcomment %}
+      {% regroup catalog by category_label as by_category %}
+      {% for group in by_category %}
+        <div class="list-group-item bg-light fw-semibold">{{ group.grouper }}</div>
+        {% for bench in group.list %}
+          <a class="list-group-item list-group-item-action d-flex justify-content-between"
+             href="{% url 'benchmarks:leaderboard' bench.benchmark_id %}">
+            <span>{{ bench.label }}
+              <span class="text-secondary small d-block">{{ bench.benchmark_id }}</span>
+            </span>
+            <span class="text-secondary small">{{ bench.runs }} run{{ bench.runs|pluralize }}</span>
+          </a>
+        {% endfor %}
+      {% empty %}
+        <div class="list-group-item text-secondary">No benchmark results published yet.</div>
+      {% endfor %}
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <a class="btn btn-outline-primary w-100 mb-3" href="{% url 'benchmarks:compare' %}">
+        Compare hardware side by side
+      </a>
+      <h2 class="h5">Latest results</h2>
+      {% for run in latest_runs %}
+        <div class="border-bottom py-2">
+          <a href="{{ run.get_absolute_url }}">{{ run.display_name }}</a>
+          <ul class="list-unstyled mb-1 mt-1 small">
+            {% for b in run.headlines %}
+              <li class="d-flex justify-content-between gap-2">
+                <a class="text-secondary text-truncate"
+                   href="{% url 'benchmarks:leaderboard' b.benchmark_id %}">{{ b.display_label }}</a>
+                <span class="text-nowrap">{{ b.display_value }} <span class="text-secondary">{{ b.unit }}</span></span>
+              </li>
+            {% endfor %}
+          </ul>
+          <div class="text-secondary small">
+            {% if run.headlines_remaining > 0 %}+{{ run.headlines_remaining }} more · {% endif %}
+            {{ run.published_at|timesince }} ago
+          </div>
+        </div>
+      {% empty %}
+        <p class="text-secondary mb-0">Nothing published yet.</p>
+      {% endfor %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base_public.html" %}
+{% block title %}Compare {{ kind_label|default:"hardware" }}s - AlmaLinux{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'benchmarks:index' %}">Benchmarks</a></li>
+  <li class="breadcrumb-item active">Compare</li>
+</ol>
+
+<div class="page-header">
+  <h1 class="page-title">Compare hardware</h1>
+  <div class="text-secondary">
+    Up to {{ max_compare }} models side by side, averaged over every published
+    run of each.
+  </div>
+</div>
+
+{% comment %}Two forms, deliberately, because the two controls do different things.
+
+   The kind selector changes what is being compared, and everything else on the page follows from
+   it: the model picker's options, the spec rows, the table, and the title. It used to sit in the
+   HTMX form below, whose target is the results table alone, so choosing GPUs swapped the table and
+   left a picker still full of CPU models - reported as GPUs not being offered at all. It is a
+   navigation, so it submits as one, and it carries no ``subject`` field: a key selected under one
+   kind means nothing under the other, and dropping them is the correct reset.
+
+   The picker stays on HTMX, which is right for it: changing which models are compared changes only
+   the table, and re-rendering the picker mid-selection would throw away the search widget's
+   state.{% endcomment %}
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <form method="get" action="{% url 'benchmarks:compare' %}">
+          <label class="form-label" for="compare-kind">Compare</label>
+          <select class="form-select" name="kind" id="compare-kind" data-submit-on-change>
+            {% for value, spec in kinds.items %}
+              <option value="{{ value }}" {% if value == kind %}selected{% endif %}>
+                {{ spec.plural }}
+              </option>
+            {% endfor %}
+          </select>
+          <noscript>
+            <button class="btn btn-outline-primary btn-sm mt-2">Switch</button>
+          </noscript>
+        </form>
+      </div>
+      <div class="col-md-9">
+        <form method="get" hx-get="{% url 'benchmarks:compare' %}"
+              hx-target="#compare-table" hx-trigger="change" hx-push-url="true">
+          {% comment %}So an HTMX subject change stays within the kind being compared.{% endcomment %}
+          <input type="hidden" name="kind" value="{{ kind }}">
+        <label class="form-label" for="compare-subjects">
+          {{ kind_label|default:"Hardware" }}s
+          <span class="text-secondary">
+            (pick {{ min_compare }} to {{ max_compare }}; the first is the baseline)
+          </span>
+        </label>
+        {% comment %}A search-and-add picker, not a multi-select: scrolling a
+           list of thousands of CPU models to ctrl-click two of them is not a
+           picker. The <select> is still what the request carries, so the page
+           degrades to a working multi-select with JavaScript off.{% endcomment %}
+        <select class="form-select" name="subject" id="compare-subjects" multiple
+                size="{{ options|length|add:1 }}"
+                data-picker="true"
+                data-picker-ordered
+                data-picker-max="{{ max_compare }}"
+                data-picker-placeholder="Search {{ kind_label|lower }} models to compare&hellip;"
+                data-picker-empty="Nothing selected yet. Search below to add up to {{ max_compare }}.">
+          {% for option in options %}
+            <option value="{{ option.key }}"
+                    {% if option.key in selected %}selected{% endif %}>
+              {{ option.label }} - {{ option.runs }} run{{ option.runs|pluralize }}
+            </option>
+          {% endfor %}
+        </select>
+        {% if not options %}
+          <div class="form-text">
+            No published {{ kind_label|default:"hardware" }} benchmark results yet, so there is
+            nothing to compare.
+          </div>
+        {% endif %}
+        <noscript>
+          <button class="btn btn-primary mt-3">Compare</button>
+        </noscript>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% include "results/_compare_table.html" %}
+
+{% endblock %}

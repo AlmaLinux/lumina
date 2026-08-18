@@ -1,0 +1,31 @@
+{% load lumina_filters %}
+{% comment %}The vendor checkboxes, on their own so the search box can swap just
+   these rather than the whole panel.
+
+   Rendered both inside `_filter_panel.html` on a full page load and as the HTMX
+   response to a vendor search, which is why it repeats the container element: the
+   swap replaces this node outright (hx-swap="outerHTML").
+
+   Height-capped rather than paginated - `filter-values-scroll` shows about five
+   rows and scrolls - because the checkboxes are a form control and a vendor that
+   never renders is a filter nobody can switch off.
+{% endcomment %}
+<div class="filter-values filter-values-scroll" id="vendor-options">
+  {% for v in vendors %}
+    <label class="form-check mb-1">
+      <input class="form-check-input" type="checkbox"
+             name="vendor" value="{{ v.slug }}"
+             {% if v.slug in active_filters|get_item:"vendor" %}checked{% endif %}>
+      <span class="form-check-label">{{ v.name }}</span>
+    </label>
+  {% empty %}
+    <p class="text-secondary small mb-0">No vendor matches that name.</p>
+  {% endfor %}
+  {% if vendor_total > vendors|length %}
+    {% comment %}Said out loud rather than left implicit: a silently truncated
+       filter list reads as "these are all the vendors".{% endcomment %}
+    <p class="text-secondary small mb-0 mt-1 border-top pt-1">
+      Showing {{ vendors|length }} of {{ vendor_total }}. Search to narrow.
+    </p>
+  {% endif %}
+</div>

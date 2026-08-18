@@ -1,0 +1,544 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Review run {{ run.uuid|truncatechars:12 }}{% endblock %}
+{% block content %}
+
+<a href="{% url 'review:queue' %}" class="btn btn-sm btn-link mb-2">&larr; Back to queue</a>
+
+{% comment %}The quarantine notice comes first and is the loudest thing on the
+   page: every action below it is unavailable until it is resolved, so a reviewer
+   who missed it would just get refusals with no explanation.{% endcomment %}
+{% if run.is_quarantined %}
+  <div class="alert alert-danger">
+    <h3 class="h5 alert-heading">Not run on AlmaLinux</h3>
+    <p>
+      This run reports
+      <strong>{{ run.host_os_id|default:"no operating system" }}</strong>{% if run.environment.os.version_id %}
+      {{ run.environment.os.version_id }}{% endif %}. It is held here and cannot be
+      approved, published, or counted as certification evidence: the catalog
+      records what works on AlmaLinux, and a result from another distribution is
+      not evidence about AlmaLinux.
+    </p>
+    <p class="mb-2">
+      Release it <strong>only</strong> if the report is wrong about the operating
+      system, which happens with rebuilt or minimised images and with containers
+      that inherit their base image's <code>/etc/os-release</code>. Releasing
+      returns it to the normal queue; it still has to be reviewed on its merits.
+      Otherwise, reject it.
+    </p>
+    <form method="post" action="{% url 'review:run_release_quarantine' run.pk %}"
+          class="row g-2 align-items-end">
+      {% csrf_token %}
+      <div class="col-md">
+        <label class="form-label mb-1" for="quarantine-reason">
+          Why is the reported operating system wrong? (required)
+        </label>
+        <input class="form-control" id="quarantine-reason" name="reason"
+               placeholder="e.g. minimal AlmaLinux 9 image with os-release stripped by the build">
+      </div>
+      <div class="col-md-auto">
+        <button class="btn btn-warning">Release from quarantine</button>
+      </div>
+    </form>
+  </div>
+{% endif %}
+
+{% if run.pre_release %}
+  <div class="alert alert-warning">
+    Pre-release hardware.
+    {% if run.publish_requested_date %}Requested publish date: <strong>{{ run.publish_requested_date }}</strong>.
+      Approving now keeps it invisible to the public until then.{% endif %}
+  </div>
+{% endif %}
+
+{% comment %}This alert stack is where every run-level qualification is announced, and the scope is
+   the one that changes what approving means. It belongs above the fold with quarantine and
+   pre-release rather than inside a card: a reviewer who misses it approves a component claim
+   believing they approved a machine.{% endcomment %}
+{% if run.is_scoped %}
+  <div class="alert alert-info">
+    <strong>{{ run.scope_labels|join:" + " }} only.</strong>
+    This run is a claim about {{ run.claim_subject|default:"the parts named below" }} and about
+    nothing else. It ran in {{ run.host_name }}, which is context: approving cannot create, link, or
+    attest a system listing for that machine, and no part outside the
+    {{ run.scope_labels|join:" or " }} scope is tied.
+  </div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h5">Summary</h2>
+      {% include "results/_run_summary.html" %}
+      {% if run.submitter_notes %}<p class="mt-2 mb-0"><strong>Submitter notes:</strong> {{ run.submitter_notes }}</p>{% endif %}
+    </div></div>
+
+    {% if results %}
+      <div class="card mb-3"><div class="card-body">
+        <h2 class="h5">Validation tests</h2>
+        {% include "results/_test_table.html" %}
+      </div></div>
+    {% endif %}
+    {% if benchmarks %}
+      <div class="card mb-3"><div class="card-body">
+        <h2 class="h5">Benchmarks</h2>
+        {% include "results/_benchmark_table.html" %}
+      </div></div>
+    {% endif %}
+
+    <div class="card"><div class="card-body">
+      <h2 class="h5">Artifacts</h2>
+      <ul class="list-unstyled mb-0">
+        {% for a in artifacts %}
+          <li><a href="{{ a.file.url }}"><code>{{ a.bundle_path }}</code></a>
+            <span class="text-secondary small">{{ a.size|filesizeformat }}</span></li>
+        {% empty %}<li class="text-secondary">No artifacts.</li>{% endfor %}
+      </ul>
+    </div></div>
+  </div>
+
+  <div class="col-lg-5">
+    {% comment %}One box, not two. "Proposed catalog listing" and "Assign a listing" described
+       the same decision from opposite ends, and the first was broken on a re-validation: it
+       printed the proposal blob's `vendor_name` and `name` under copy promising that approving
+       "creates the System listing with these details", when for a run against catalogued
+       hardware those keys are not in the blob at all - the identity is locked for anybody who
+       does not speak for the listing's vendor, so the values are discarded rather than stored.
+       The result was two labels with nothing after them, over a sentence that was also wrong,
+       because approving reuses the listing rather than creating anything.
+
+       So this states what approving will actually do, derived by `proposal_effect` the same way
+       `create_listings_from_run` derives it, and the assignment form is the inline override -
+       the shape the submitter's side uses, and asked for here.{% endcomment %}
+    <div class="card mb-3 border-info"><div class="card-body">
+      {% comment %}A scoped run's effect is on its parts, and both machine branches below state
+         something untrue of it: that approving creates a System listing for the host, or that the
+         run is evidence about a System already in the catalog. Neither is what approval does -
+         ``create_listings_from_run`` takes its scoped branch straight to ``ensure_component_ties``,
+         and ``scoped_listings`` keeps the host out of everything downstream.{% endcomment %}
+      {% if effect.scoped %}
+        <h2 class="h5">Approving attests this run's {{ effect.scope_labels|join:" and " }} only</h2>
+        <p class="text-secondary small mb-2">
+          This run is evidence for the {{ effect.scope_labels|join:" and " }} below and for nothing
+          else. It was measured in {{ effect.host_name }}, which it makes no claim about: no system
+          listing is created, linked, or attested. Submitted by {{ run.submitter }}.
+        </p>
+        {% if effect.unevidenced %}
+          {% comment %}Said here rather than left to the verdict badge, which answers "did anything
+             fail" and reads PASS when nothing ran.{% endcomment %}
+          <div class="alert alert-warning mb-2">
+            This run certifies nothing. Its {{ effect.unevidenced|join:", " }} claim has no
+            gating result that passed, so approving it publishes the run as a record and moves no
+            listing's standing.
+          </div>
+        {% endif %}
+        {% if effect.parts %}
+          <p class="small mb-2">Parts approval will tie and attest:
+            {{ effect.parts|join:", " }}.</p>
+        {% else %}
+          <div class="alert alert-warning mb-2">
+            Nothing in this run's inventory identifies
+            {{ effect.scope_labels|join:" or " }} hardware, so there is nothing to tie or certify.
+          </div>
+        {% endif %}
+      {% elif effect.creates %}
+        <h2 class="h5">Approving creates a listing</h2>
+        <p class="text-secondary small mb-2">
+          Nothing in the catalog covers this machine yet.
+          {% if effect.from_report %}
+            The identity below is what the firmware reported - {{ run.submitter }} did not
+            restate it.
+          {% else %}
+            Submitted by {{ run.submitter }}.
+          {% endif %}
+        </p>
+      {% else %}
+        <h2 class="h5">Approving attests an existing listing</h2>
+        <p class="text-secondary small mb-2">
+          This run is evidence about
+          {% include "hardware/_listing_link.html" with listing=effect.listing with_vendor=True only %}{{ "" }},
+          which it does not change.
+          {% if not effect.applies_details %}
+            {% comment %}"The submitter" rather than the username, which rendered as
+               "...does not change. reviewer does not speak for its vendor" - a lowercase
+               account name opening a sentence.{% endcomment %}
+            The submitter does not speak for its vendor, so nothing they entered can restate
+            it.
+          {% endif %}
+        </p>
+      {% endif %}
+
+      <dl class="row mb-0 small">
+        {% if effect.creates %}
+          <dt class="col-sm-4">Vendor</dt><dd class="col-sm-8">{{ effect.vendor|default:"-" }}</dd>
+          <dt class="col-sm-4">Name</dt><dd class="col-sm-8">{{ effect.name|default:"-" }}</dd>
+          {% if effect.model_number %}
+            <dt class="col-sm-4">Model number</dt><dd class="col-sm-8">{{ effect.model_number }}</dd>
+          {% endif %}
+        {% endif %}
+        {% comment %}Evidence and declaration are different things and were shown as one. This
+           row said "AlmaLinux claimed: 9.8+, 10.2+" for a run that will record 9.8 alone: the
+           run proves the release it passed on, and the submitter's other ticks are declared
+           support that `apply_proposal_metadata` writes only when approval *creates* the
+           listing. On a re-validation they are dropped.
+
+           Which release matters here beyond bookkeeping: the attestation this run produces
+           hangs off that one version row, so it is the only tier the validation level below can
+           move.{% endcomment %}
+        {% if effect.run_release %}
+          <dt class="col-sm-4">Proves</dt>
+          <dd class="col-sm-8">
+            {% comment %}The tier belongs in this row, not left to be inferred from the dropdown
+               below - that control is a ceiling, and reading it as the answer is what made the
+               whole thing unclear.{% endcomment %}
+            {% comment %}The major is the claim; the minor is where the evidence came from.
+               Both belong here and they are not the same statement - certification is per
+               major, and a pass on 9.8 says the same thing about AlmaLinux 9 as a pass on
+               9.4.{% endcomment %}
+            AlmaLinux {{ effect.run_release.major }}
+            as <strong>{{ effect.level_display }}</strong>
+            <span class="text-secondary">(run on
+              {{ effect.run_release.major }}.{{ effect.run_release.minor }})</span>
+            <span class="text-secondary d-block">
+              The attestation and that tier land on this major only. Others keep whatever
+              their own evidence earned.
+            </span>
+            {% if effect.parts_capped %}
+              {% comment %}The other half of "components, or only the system?": a vendor tier
+                 stops at the parts that vendor makes, so the ones that fall back are named
+                 rather than described.{% endcomment %}
+              <span class="text-secondary d-block mt-1">
+                Attached parts are capped by their own maker, so
+                {% for part in effect.parts_capped %}
+                  <strong>{{ part.label }}</strong> gets {{ part.level_display }}{% if not forloop.last %},{% endif %}
+                {% endfor %}.
+              </span>
+            {% endif %}
+          </dd>
+        {% endif %}
+        {% comment %}"Also ticked" was wrong twice: it credited the tick to the submitter, and it
+           warned the tick would not be recorded. Neither holds for support the listing already
+           has. The form pre-ticks whatever the listing and the submitter's other runs already
+           claim - that is what stops saving the form looking like a retraction - so a tick on an
+           existing major is not an assertion, and there is nothing to record because it is
+           already recorded.{% endcomment %}
+        {% if effect.carried %}
+          <dt class="col-sm-4">Unchanged</dt>
+          <dd class="col-sm-8">
+            {% for release in effect.carried %}
+              AlmaLinux {{ release.major }}{% if release.level_display %}
+                <span class="text-secondary">({{ release.level_display }})</span>{% endif %}{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+            <span class="text-secondary d-block">
+              Already in the catalog and carried forward as it stands. This run neither adds to
+              it nor takes anything from it.
+            </span>
+          </dd>
+        {% endif %}
+        {% comment %}A major the listing does not hold yet is a real declaration, and this is the
+           one case where the tick is the submitter's own claim.{% endcomment %}
+        {% if effect.new_declarations %}
+          <dt class="col-sm-4">
+            {% if effect.declares %}Also declares{% else %}Claimed but dropped{% endif %}
+          </dt>
+          <dd class="col-sm-8">
+            {% for release in effect.new_declarations %}
+              AlmaLinux {{ release.major }}{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+            {% if effect.declares %}
+              <span class="text-secondary d-block">
+                Recorded as declared support, with no tier: nobody has proved these, the
+                submitter is stating them.
+              </span>
+            {% else %}
+              <span class="text-warning d-block">
+                The submitter ticked these and approving will not record them. Declared support
+                is only written when approval creates a listing, so a re-validation cannot add a
+                release the catalog does not already hold.
+              </span>
+            {% endif %}
+          </dd>
+        {% endif %}
+        {% if effect.cpu_model %}
+          <dt class="col-sm-4">CPU corrected to</dt>
+          <dd class="col-sm-8">{{ effect.cpu_model }}</dd>
+        {% endif %}
+        {% if effect.applies_details and effect.vendor_spec_url %}
+          <dt class="col-sm-4">Spec sheet</dt>
+          <dd class="col-sm-8"><a href="{{ effect.vendor_spec_url }}" rel="nofollow">{{ effect.vendor_spec_url }}</a></dd>
+        {% endif %}
+        {% if effect.applies_details and effect.description %}
+          <dt class="col-sm-4">Description</dt>
+          <dd class="col-sm-8">{{ effect.description|linebreaksbr }}</dd>
+        {% endif %}
+      </dl>
+
+      {% comment %}One form, two sections, and the split matters.
+
+         Withholding a run and re-pointing it at a different listing are unrelated decisions.
+         Everything on this form used to render inside the collapsed block below, which meant the
+         embargo controls sat behind a label reading "Attest a different listing" - reported as
+         not being able to find a way to gate a run at all, and reasonably read as deliberate.
+
+         So the gates are shown outright and the assignment stays behind the override. Still one
+         ``<form>`` and one button: the endpoint treats a blank box as a decision to clear, so
+         posting the gates alone would unlink the run's listings.{% endcomment %}
+      <form method="post" action="{% url 'review:run_assign_listing' run.pk %}">
+        {% csrf_token %}
+        <h3 class="h6 mb-1">Withhold this run</h3>
+        <p class="text-secondary small mb-2">
+          Two reasons a run can be held back, and they are independent: the hardware is not
+          announced yet, and the AlmaLinux minor carrying its enablement has not shipped.
+        </p>
+        {% for field in assign_form.gate_rows %}
+          {% include "results/_form_field.html" %}
+        {% endfor %}
+
+        <div class="mt-3">
+          <input type="checkbox" id="assign-override" class="reveal-toggle visually-hidden">
+          <label class="btn btn-sm btn-link px-0 align-baseline" for="assign-override">
+            <span class="reveal-when-closed">
+              {% if effect.creates %}
+                Attest an existing listing instead
+              {% else %}
+                Attest a different listing
+              {% endif %}
+            </span>
+            <span class="reveal-when-open">Leave the assignment alone</span>
+          </label>
+          <div class="reveal-fields">
+            <p class="text-secondary small mb-2">
+              Link this run to catalog listings so it counts toward their certification. Level is
+              capped at what the submitter can claim. Leaving this blank is what makes approving
+              {% if effect.creates %}create the listing above{% else %}attest
+              {{ effect.listing }}{% endif %}.
+            </p>
+            {% for field in assign_form.assignment_rows %}
+              {% include "results/_form_field.html" %}
+            {% endfor %}
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-primary mt-2">Save</button>
+      </form>
+    </div></div>
+
+      {% comment %}One list, not two. This was a grouped read-only preview headed "Will be
+         attached on approval" followed by a flat editable form headed "Adjust before approving"
+         - the same parts twice on one page, with different information beside each copy and a
+         reader left to match them up by name. Reported as: couldn't this be combined, the way
+         the submitter's side shows what it is and what it ties to with an inline option to
+         change it.
+
+         So the grouping (the better read) and the controls (the point) are now the same rows,
+         both from ``component_form.component_groups`` - which is ``preview_component_ties``
+         grouped, the very source the read-only list was built from.{% endcomment %}
+      {% comment %}The form opens **outside** the card and is rendered whether or not there are
+         components, because the approve buttons down in the Decision card join it by id
+         (``form="run-review"``) so that approving posts these answers too. A run with nothing to
+         tie must still find the form its Approve button names: an ``id`` that resolves to nothing
+         detaches the control from every form, and the button would silently do nothing.
+
+         Why they share a form at all. They were two, one per card, and the tie controls are not in
+         the approve form's POST - so a reviewer who unticked "Certify as Intel" and pressed
+         Approve had the untick thrown away and certified the part at the vendor tier they had just
+         declined. The box is offered ticked, so silence is a claim, and losing the answer is not
+         neutral. Pressing "Save component changes" first worked, but a decision that depends on
+         remembering to press a second button is not a decision anybody made.{% endcomment %}
+      <form id="run-review" method="post"
+            action="{% url 'review:run_component_ties' run.pk %}">
+        {% csrf_token %}
+      {% if component_form.component_groups %}
+      {% comment %}Its own card. When the proposal and assignment boxes merged, the replacement
+         card was self-contained while this section had been living inside the *old* assign
+         card - so it lost its wrapper and the old card's closing tags stayed behind, closing
+         the column and the row early. Everything below rendered outside the grid.{% endcomment %}
+      <div class="card mb-3"><div class="card-body">
+          {% comment %}Says this section was submitted. The controls below answer by absence -
+             an unticked box is not posted - so without it a request that never rendered them is
+             indistinguishable from one that unticked every part, and would drop the lot. Same
+             marker as the submitter's form; see
+             ``ComponentTiesMixin._components_were_submitted``.{% endcomment %}
+          {{ component_form.components_submitted }}
+          <h3 class="h6 mb-1">Components this run is evidence for</h3>
+          <p class="text-secondary small mb-2">
+            Approving attaches these; they are not assignments you need to make. Untick anything
+            this run should not be evidence for. Where a curated family exists the
+            <em>family</em> is what gets attached, because certification applies to the family -
+            the specific part is named beside it since that is what benchmark results are
+            recorded against.
+          </p>
+          {% for group in component_form.component_groups %}
+            <div class="mb-2">
+              <div class="text-secondary small text-uppercase">{{ group.label }}</div>
+              {% for entry in group.entries %}
+                <div class="d-flex align-items-start gap-3 py-2 border-top">
+                  <div class="form-check mt-1">
+                    <input class="form-check-input" type="checkbox" name="included_ties"
+                           value="{{ entry.key }}" id="rtie-{{ entry.key|slugify }}"
+                           {% if not entry.excluded %}checked{% endif %}>
+                    <label class="form-check-label visually-hidden"
+                           for="rtie-{{ entry.key|slugify }}">Attach this component</label>
+                  </div>
+                  <div class="flex-grow-1">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                      <div>
+                        {% if entry.raw_model %}
+                          <div>{{ entry.brand }} {{ entry.raw_model }}</div>
+                        {% endif %}
+                        {% if entry.family %}
+                          <div class="small text-secondary">
+                            &rarr; groups into
+                            <a href="{% url 'hardware:detail' entry.family.slug %}">{{ entry.family.name }}</a>
+                          </div>
+                        {% endif %}
+                      </div>
+                      {% comment %}``flex-shrink-0`` kept the badge on one line, and took the two
+                         explanatory lines under it along for the ride: "as <catalog name>" and
+                         "and a new vendor, <brand>" are prose, they can be long, and a column that
+                         refuses to shrink pushes them straight out of the card and off the page.
+                         Found by measuring, at 1440 wide, on a run whose parts are all new: 27px
+                         of horizontal scroll on the whole document.
+
+                         The badge is a span and does not wrap anyway, so only the prose needed
+                         permission to.{% endcomment %}
+                      <div class="text-end" style="min-width: 0">
+                        {% if entry.excluded %}
+                          <span class="badge text-bg-light text-secondary">not attached</span>
+                        {% elif entry.will_create %}
+                          <span class="badge text-bg-primary">new component</span>
+                          {% if entry.catalog_name %}
+                            <div class="small text-secondary">as
+                              &ldquo;{{ entry.catalog_name }}&rdquo;</div>
+                          {% endif %}
+                          {% if entry.new_vendor %}
+                            <div class="small text-primary">and a new vendor,
+                              &ldquo;{{ entry.brand }}&rdquo;</div>
+                          {% endif %}
+                        {% else %}
+                          <span class="badge text-bg-secondary">existing</span>
+                          <div class="small text-secondary">{{ entry.component.name }}</div>
+                        {% endif %}
+                      </div>
+                    </div>
+                    {% comment %}The same partial the submitter's form uses: a matched part shows
+                       its match with the boxes behind an override, a new one shows the boxes. A
+                       reviewer is often the one who knows that "OEM" is ASRock, and they are the
+                       last person who can fix it - approving creates the entries.{% endcomment %}
+                    {% include "results/_component_identity.html" with entry=entry counter=entry.key|slugify %}
+                    {% if entry.claim_field %}
+                      {% comment %}Eligibility is the run's *submitter*, so this only appears for
+                         parts whose vendor they represent. A reviewer ticking it for somebody
+                         who does not would produce a community attestation anyway.{% endcomment %}
+                      <div class="form-check mt-2">
+                        {{ entry.claim_field }}
+                        <label class="form-check-label"
+                               for="{{ entry.claim_field.id_for_label }}">
+                          {{ entry.claim_field.label }}
+                        </label>
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% endfor %}
+          {% comment %}Still here, and still useful: it saves without deciding. No ``formaction``,
+             so it uses the form's own - the ties endpoint.{% endcomment %}
+          <button class="btn btn-sm btn-outline-primary mt-2" type="submit">
+            <i class="bi bi-save me-1"></i>Save component changes
+          </button>
+      </div></div>
+      {% endif %}
+      </form>
+
+    <div class="card"><div class="card-body">
+      <h2 class="h5">Decision</h2>
+      {% if run.run_type == "validate" and not verdict %}
+        {% comment %}Approving is still allowed - it records the run - but it grants no
+           certification, and silence about that reads as a broken button.{% endcomment %}
+        <div class="alert alert-warning" role="alert">
+          <strong>This run did not pass.</strong>
+          Approving it records the run, but it will <strong>not</strong> certify
+          or publish any listing, tie components, or record AlmaLinux
+          compatibility. Certification needs no failures or errors outside
+          informational tests.
+          {% if blocking_results %}
+            <ul class="mb-0 mt-2 small">
+              {% for r in blocking_results %}
+                <li><code>{{ r.test_id }}</code> - {{ r.status }}
+                  ({{ r.severity }}){% if r.reason %}: {{ r.reason|truncatechars:140 }}{% endif %}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+      {% endif %}
+      {% comment %}No ``<form>`` of its own. These belong to ``#run-review`` up in the components
+         card, so the answers a reviewer just gave about the parts travel with the approval;
+         ``formaction`` sends them here instead of to that form's own endpoint.{% endcomment %}
+      <div class="mb-2">
+        <textarea class="form-control mb-2" name="notes" rows="2" form="run-review"
+                  placeholder="Notes (optional). Applied to every run you approve."></textarea>
+        <button class="btn btn-success w-100" form="run-review"
+                {% comment %}``is_embargoed_by_request`` is the rule ``approve_run`` applies, including the
+                   dateless hold. Spelled out here as "pre-release AND a date", the label promised a
+                   plain approval for the one case most likely to need the warning: unreleased
+                   hardware whose announcement date is not settled yet.{% endcomment %}
+                formaction="{% url 'review:run_approve' run.pk %}">Approve{% if run.is_embargoed_by_request %} (embargoed){% endif %}</button>
+      </div>
+      {% if pending_siblings %}
+        {% comment %}One machine validated on several releases arrives as several
+           runs with identical listing details. They all resolve to the same
+           catalog entry on approval, so reviewing the evidence once and
+           approving once is the honest shape of the work.{% endcomment %}
+        <div class="border rounded p-2 mb-2">
+          {% comment %}Siblings are runs making the same claim about the same hardware, so a
+             scoped run's group is other runs of the same component. Saying "of this machine" and
+             "the same catalog listing" described the one thing a scoped batch never
+             attaches to.{% endcomment %}
+          <p class="small mb-2">
+            The same submitter has
+            <strong>{{ pending_siblings|length }}</strong> other queued
+            run{{ pending_siblings|pluralize }} of this
+            {% if run.is_scoped %}{{ run.scope_labels|join:" and " }}{% else %}machine{% endif %}.
+            Approving them together attaches every one to the same
+            {% if run.is_scoped %}component listings{% else %}catalog listing{% endif %}.
+          </p>
+          <ul class="list-unstyled small mb-2">
+            {% for sibling in pending_siblings %}
+              <li class="mb-1">
+                {% if sibling.passed %}
+                  <span class="badge text-bg-success">passed</span>
+                {% else %}
+                  <span class="badge text-bg-warning">did not pass</span>
+                {% endif %}
+                <a href="{% url 'review:run_detail' sibling.pk %}">{{ sibling.alma_release }}</a>
+                {% if not sibling.passed %}
+                  <span class="text-secondary">- left for you to review on its own page</span>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+          {% comment %}No notes box of its own. There was one, named ``group_notes`` to avoid
+             colliding with the box above now that both belong to one form - but two boxes in one
+             form is the wrong answer to that: whichever one the reviewer typed in, pressing the
+             other button silently discarded it. One box, used by whichever button is pressed,
+             which is also what a reader would assume from looking at the card.{% endcomment %}
+          <button class="btn btn-outline-success w-100" form="run-review"
+                  formaction="{% url 'review:run_approve_group' run.pk %}">
+            Approve all {{ pending_siblings|length|add:1 }} runs of this {% if run.is_scoped %}{{ run.scope_labels|join:" and " }}{% else %}machine{% endif %}
+          </button>
+        </div>
+      {% endif %}
+      <form method="post" action="{% url 'review:run_request_changes' run.pk %}" class="mb-2">
+        {% csrf_token %}
+        <input class="form-control mb-2" name="reason" placeholder="What needs changing?">
+        <button class="btn btn-outline-secondary w-100">Request changes</button>
+      </form>
+      <form method="post" action="{% url 'review:run_reject' run.pk %}">
+        {% csrf_token %}
+        <input class="form-control mb-2" name="reason" placeholder="Reason for rejection">
+        <button class="btn btn-outline-danger w-100">Reject</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lumina*"]
+exclude = ["ansible*", "templates*", "static*", "docs*", "tests*"]
+
+[project]
+name = "lumina"
+version = "0.1.0"
+description = "AlmaLinux hardware certification catalog"
+requires-python = ">=3.12"
+dependencies = [
+    "Django>=5.2,<6.0",
+    "django-unfold>=0.50",
+    "django-htmx>=1.19",
+    "django-filter>=24.3",
+    "djangorestframework>=3.15",
+    "django-redis>=5.4",
+    "mozilla-django-oidc>=4.0",
+    # mysqlclient is the C-based MariaDB/MySQL driver. Requires system headers:
+    #   AlmaLinux/Fedora: sudo dnf install -y mariadb-connector-c-devel pkgconf-pkg-config gcc python3-devel
+    #   Debian/Ubuntu:    sudo apt install -y libmariadb-dev pkg-config build-essential python3-dev
+    "mysqlclient>=2.2",
+    # Result bundles from alma-cert are .tar.zst; stdlib zstd needs 3.14+
+    # so the library keeps us portable across interpreters.
+    "zstandard>=0.22",
+    "gunicorn>=23.0",
+    "python-dotenv>=1.0",
+    # Required by Django's ImageField (used for vendor logos).
+    "Pillow>=10.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-cov>=5.0",
+    "factory-boy>=3.3",
+    "ruff>=0.6",
+    # django-stubs gives pyright/Pyrefly accurate types for Django models,
+    # managers, and querysets. Without it, every M2M `.add()`, FK descriptor,
+    # and `Model.objects.…` call surfaces as "partially unknown".
+    "django-stubs[compatible-mypy]>=5.1",
+]
+
+browser = [
+    # Drives a real browser for the tests under tests/browser/. A separate extra so the ordinary
+    # dev install stays as small as it was, and so CI can decide per job whether to pay for it.
+    #
+    # Not pytest-playwright: its fixtures assume a Playwright-managed browser and its command line
+    # flags fight with ours. The fixtures this project needs are in tests/browser/conftest.py and
+    # come to about a hundred lines, most of which is the sign-in shortcut.
+    "playwright>=1.49",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "lumina.settings.test"
+# Where the tests are. Without this, collection starts at the repository root and walks everything,
+# including ``ansible/collections`` once somebody has run the galaxy install: pytest then tries to
+# collect the test suites of the installed collections and the run ends in collection errors before a
+# single test of ours has run.
+testpaths = ["lumina", "tests"]
+python_files = ["test_*.py", "tests.py", "*_tests.py"]
+# Test classes MUST be named ``<Thing>Tests``, not ``TestThing``.
+#
+# The narrow pattern is here because production classes are named TestRun,
+# TestResult, TestResultAttachment, TestRunSerializer and so on - ten of them - and
+# a ``Test*`` pattern makes pytest try to collect every one that a test module
+# imports.
+#
+# The cost of getting this wrong is invisible: a class named ``TestFoo`` is not
+# collected, not reported, and not counted, so its tests silently never run. 63
+# classes holding 210 tests were dormant that way, long enough for two of them to
+# stop matching the code they were guarding. Flat ``def test_*`` functions are
+# always collected and are the safer default.
+python_classes = ["Test*Case", "*Tests"]
+markers = [
+    "browser: drives a real browser through a live server.",
+]
+# Browser tests run with everything else. They were gated behind ``-m 'not browser'`` at first,
+# which is the usual arrangement and the wrong one here: the failures they catch are the ones this
+# project keeps shipping, and a suite you have to remember to run separately is a suite that
+# catches things after the fact. They add about a minute.
+#
+# ``pytest -m 'not browser'`` skips them when you want the fast loop, and they skip themselves
+# with a clear message on a machine with no browser installed.
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "DJ"]
+ignore = ["E501"]

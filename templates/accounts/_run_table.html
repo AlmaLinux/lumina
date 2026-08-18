@@ -1,0 +1,89 @@
+{% comment %}One run table, used for all four panes: validation and benchmark, active and archived.
+
+Four copies of nearly the same table is how the archive action would end up on three of them and
+not the fourth. ``kind`` decides the columns a benchmark run does not share with a validation one,
+and ``archived`` decides whether the last column offers to put the run away or bring it back.
+
+``next`` on the form so the action returns to this page rather than dropping the reader somewhere
+else after filing something. The view only honors same-site paths.{% endcomment %}
+<div class="table-responsive">
+  <table class="table table-sm mb-0">
+    <thead>
+      <tr>
+        <th>Hardware</th>
+        {% if kind == "validation" %}<th>Type</th>{% endif %}
+        <th>Submitted</th>
+        <th>Status</th>
+        {% if kind == "validation" %}<th>Linked system</th>{% else %}<th>Metrics</th>{% endif %}
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+        <tr>
+          <td>
+            <a href="{{ r.get_absolute_url }}">{{ r.display_name }}</a>
+            {% comment %}Without this a component claim and a whole-machine validation are two
+               indistinguishable rows, and the name in a scoped row is the component while the
+               name in every other row is the machine.{% endcomment %}
+            {% if r.is_scoped %}
+              <span class="badge bg-purple-lt">{{ r.scope_labels|join:" + " }} only</span>
+              <div class="text-secondary small">in {{ r.host_name }}</div>
+            {% endif %}
+          </td>
+          {% if kind == "validation" %}<td class="text-secondary">{{ r.run_type }}</td>{% endif %}
+          <td class="text-secondary small">{{ r.received_at|date:"Y-m-d" }}</td>
+          <td>
+            <span class="badge text-bg-{% if r.status == 'approved' %}success{% elif r.status == 'rejected' %}danger{% elif r.status == 'draft' or r.status == 'needs-changes' %}warning{% else %}secondary{% endif %}">{{ r.get_status_display }}</span>
+            {% comment %}"Approved" and invisible are different facts, and a submitter who cannot
+               find their machine in the catalog is owed the second one. This was on the separate
+               run list and nowhere else, so folding it in was the precondition for retiring that
+               page.{% endcomment %}
+            {% if r.is_embargoed %}<span class="badge text-bg-info">embargoed</span>{% endif %}
+          </td>
+          {% if kind == "validation" %}
+            <td class="small">
+              {% if r.listing_system %}
+                {% include "hardware/_listing_link.html" with listing=r.listing_system only %}
+              {% elif r.is_scoped %}
+                {% comment %}Not a gap to fill. A scoped run never carries a System listing, and
+                   ``assign_listing`` refuses one, so an empty cell beside "Finish submission"
+                   invited exactly the wrong conclusion.{% endcomment %}
+                <span class="text-secondary">not applicable</span>
+              {% else %}-{% endif %}
+            </td>
+          {% else %}
+            <td class="text-secondary small">{{ r.benchmarks.count }}</td>
+          {% endif %}
+          <td class="small text-nowrap">
+            {% if archived %}
+              <form method="post" action="{% url 'results:unarchive_run' r.uuid %}" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button class="btn btn-sm btn-link p-0" type="submit">Restore</button>
+              </form>
+            {% else %}
+              {% comment %}Spelled out rather than left to the machine name being a link: a run
+                 waiting on the submitter needs to say so.{% endcomment %}
+              {% if r.status == "draft" %}
+                <a href="{{ r.get_absolute_url }}">Finish submission</a>
+              {% elif r.status == "needs-changes" %}
+                <a href="{{ r.get_absolute_url }}">Review and resubmit</a>
+              {% else %}
+                <a class="text-secondary" href="{{ r.get_absolute_url }}">View</a>
+              {% endif %}
+              {% if r.can_archive %}
+                <form method="post" action="{% url 'results:archive_run' r.uuid %}" class="d-inline">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <button class="btn btn-sm btn-link p-0 ms-2 text-secondary" type="submit"
+                          title="Hide this from your dashboard. Nothing is deleted.">Archive</button>
+                </form>
+              {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

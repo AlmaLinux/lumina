@@ -1,0 +1,437 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Review queue{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    Submissions awaiting reviewer action. Anything already decided is in the
+    <a href="{% url 'review:archive' %}">archive</a>.
+  </p>
+{% endblock %}
+{% block content %}
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-submissions" type="button" role="tab">
+      Hardware submissions
+      <span class="badge text-bg-secondary ms-1">{{ submissions|length }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-vendors" type="button" role="tab">
+      Vendors
+      <span class="badge text-bg-secondary ms-1">{{ vendor_queue_count }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-edits" type="button" role="tab">
+      Listing edits
+      <span class="badge text-bg-secondary ms-1">{{ listing_edits|length }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-software" type="button" role="tab">
+      Software
+      <span class="badge text-bg-secondary ms-1">{{ software_queue_count }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-validation-runs" type="button" role="tab">
+      Validation &amp; collect runs
+      <span class="badge text-bg-secondary ms-1">{{ validation_runs|length }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-benchmark-runs" type="button" role="tab">
+      Benchmark runs
+      <span class="badge text-bg-secondary ms-1">{{ benchmark_runs|length }}</span>
+    </button>
+  </li>
+  {% comment %}Only when there is something in it. An always-present tab reading
+     zero would imply this is a routine part of the workflow; it is an
+     exception.{% endcomment %}
+  {% if quarantined_runs %}
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-quarantined-runs" type="button" role="tab">
+        Not on AlmaLinux
+        <span class="badge text-bg-danger ms-1">{{ quarantined_runs|length }}</span>
+      </button>
+    </li>
+  {% endif %}
+</ul>
+
+<div class="tab-content">
+  <div class="tab-pane fade show active" id="tab-submissions" role="tabpanel">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Listing</th><th>Submitter</th>
+              <th>Claims</th><th>Evidence</th>
+              <th>Claimed level</th><th>Status</th><th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in submissions %}
+              <tr>
+                <td class="text-secondary small">{{ s.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                  <div class="fw-semibold">{{ s.listing }}</div>
+                  {% include "review/_similar_listings.html" with similar=s.similar_listings compact=True only %}
+                </td>
+                <td class="small">
+                  {{ s.submitter }}
+                  {% if s.on_behalf_of %}<br><span class="text-secondary">on behalf of {{ s.on_behalf_of }}</span>{% endif %}
+                </td>
+                <td class="small">
+                  {% for release in s.cited_releases.all %}
+                    <div>{{ release }}</div>
+                  {% empty %}
+                    <span class="text-secondary">no release</span>
+                  {% endfor %}
+                </td>
+                {% comment %}Evidence count, so a bare assertion is visible without
+                   opening it. A declared submission with no attachments is legitimate
+                   (that is what "declared" means) but it is the one a reviewer should
+                   read the notes on.{% endcomment %}
+                <td class="small">
+                  {% if s.attachment_count %}
+                    <i class="bi bi-paperclip"></i> {{ s.attachment_count }}
+                  {% else %}
+                    <span class="text-secondary">none</span>
+                  {% endif %}
+                </td>
+                <td><span class="badge badge-validation badge-{{ s.claimed_validation_level }}">{{ s.get_claimed_validation_level_display }}</span></td>
+                <td><span class="status-pill status-{{ s.status }}">{{ s.get_status_display }}</span></td>
+                <td class="text-end"><a class="btn btn-sm btn-primary" href="{% url 'review:detail' s.pk %}">Review</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="8" class="text-center text-secondary py-4">No pending submissions.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tab-vendors" role="tabpanel">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Kind</th><th>Vendor</th><th>Proposer</th>
+              <th>Status</th><th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in vendor_proposals %}
+              <tr>
+                <td class="text-secondary small">{{ p.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td><span class="badge text-bg-info">{{ p.get_kind_display }}</span></td>
+                <td><div class="fw-semibold">{% if p.target %}{{ p.target.name }}{% else %}{{ p.name }}{% endif %}</div></td>
+                <td class="small">{{ p.proposed_by }}</td>
+                <td><span class="status-pill status-{{ p.status }}">{{ p.get_status_display }}</span></td>
+                <td class="text-end"><a class="btn btn-sm btn-primary" href="{% url 'review:vendor_proposal_detail' p.pk %}">Review</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="text-center text-secondary py-4">No pending vendor proposals.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% comment %}Claims sit beside proposals rather than in a tab of their own:
+       both are decisions about a vendor record, and the queue is already five
+       tabs deep. Approve carries two checkboxes because verifying the vendor and
+       keeping its existing members are separate judgements from recognising the
+       claimant.{% endcomment %}
+    <h2 class="h5 mt-4">Vendor claims</h2>
+    <p class="text-secondary small">
+      Someone asking to be recognised as representing a vendor. Approving grants
+      them ownership and hands over every listing already attributed to that
+      vendor that nobody maintains.
+    </p>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Vendor</th><th>Claimant</th><th>Stated role</th>
+              <th>Status</th><th class="text-end">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in vendor_claims %}
+              <tr>
+                <td class="text-secondary small">{{ c.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                  <div class="fw-semibold">{{ c.vendor.name }}</div>
+                  <div class="text-secondary small">
+                    {% if c.vendor.verified %}already verified{% else %}not verified{% endif %}
+                    {% if c.vendor.is_claimed %} &middot; already claimed{% endif %}
+                  </div>
+                </td>
+                <td class="small">
+                  {{ c.requester }}
+                  <div class="text-secondary">{{ c.work_email }}</div>
+                </td>
+                <td class="small">
+                  {{ c.role_at_vendor }}
+                  {% if c.note %}<div class="text-secondary">{{ c.note|truncatechars:90 }}</div>{% endif %}
+                  {% if c.evidence %}
+                    <div><a href="{{ c.evidence.url }}">Attached evidence</a></div>
+                  {% endif %}
+                </td>
+                <td><span class="status-pill status-{{ c.status }}">{{ c.get_status_display }}</span></td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'review:vendor_claim_approve' c.pk %}"
+                        class="d-inline-flex flex-column align-items-end gap-1 mb-2">
+                    {% csrf_token %}
+                    <label class="form-check-label small">
+                      <input class="form-check-input" type="checkbox" name="verify" checked>
+                      Also mark verified
+                    </label>
+                    <label class="form-check-label small">
+                      <input class="form-check-input" type="checkbox" name="keep_members">
+                      Keep existing submit-role members
+                    </label>
+                    <button class="btn btn-sm btn-success">Approve claim</button>
+                  </form>
+                  <form method="post" action="{% url 'review:vendor_claim_reject' c.pk %}">
+                    {% csrf_token %}
+                    <input class="form-control form-control-sm mb-1" name="reason"
+                           placeholder="Reason" required>
+                    <button class="btn btn-sm btn-outline-danger">Reject</button>
+                  </form>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="text-center text-secondary py-4">No pending vendor claims.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tab-edits" role="tabpanel">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Listing</th><th>Owner vendor</th><th>Proposer</th>
+              <th>Status</th><th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in listing_edits %}
+              <tr>
+                <td class="text-secondary small">{{ p.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td><div class="fw-semibold">{{ p.target }}</div></td>
+                <td class="small">{{ p.target.owner_vendor|default:"-" }}</td>
+                <td class="small">{{ p.proposed_by }}</td>
+                <td><span class="status-pill status-{{ p.status }}">{{ p.get_status_display }}</span></td>
+                <td class="text-end"><a class="btn btn-sm btn-primary" href="{% url 'review:listing_edit_detail' p.pk %}">Review</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="text-center text-secondary py-4">No pending listing edits.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {% comment %}One pane, three tables. Software submissions and edit proposals get
+     the usual detail-page treatment; a community-reported major does not, because
+     the entire decision is "does this product work on this release" and a detail
+     page would add a click for nothing.{% endcomment %}
+  <div class="tab-pane fade" id="tab-software" role="tabpanel">
+    <h2 class="h5">Software submissions</h2>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Product</th><th>Submitter</th>
+              <th>Claimed level</th><th>Releases</th><th>Status</th>
+              <th class="text-end">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in software_submissions %}
+              <tr>
+                <td class="text-secondary small">{{ s.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                  <div class="fw-semibold">{{ s.software.name }}</div>
+                  <div class="text-secondary small">
+                    {{ s.software.vendor.name }}
+                  </div>
+                </td>
+                <td class="small">
+                  {{ s.submitter }}
+                  {% if s.on_behalf_of %}
+                    <div class="text-secondary">for {{ s.on_behalf_of.name }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge badge-validation badge-{{ s.claimed_validation_level }}">
+                    {{ s.get_claimed_validation_level_display }}
+                  </span>
+                </td>
+                <td class="small">
+                  {% for row in s.software.compatibility.all %}
+                    <div>AlmaLinux {{ row.release.major }}</div>
+                  {% empty %}
+                    <span class="text-secondary">none</span>
+                  {% endfor %}
+                </td>
+                <td><span class="status-pill status-{{ s.status }}">{{ s.get_status_display }}</span></td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'review:software_approve' s.pk %}"
+                        class="mb-2">
+                    {% csrf_token %}
+{% include "review/_final_level_select.html" with select_class="form-select form-select-sm mb-1" only %}
+                    <button class="btn btn-sm btn-success">Approve</button>
+                  </form>
+                  <form method="post" action="{% url 'review:software_reject' s.pk %}"
+                        class="mb-2">
+                    {% csrf_token %}
+                    <input class="form-control form-control-sm mb-1" name="reason"
+                           placeholder="Reason" required>
+                    <button class="btn btn-sm btn-outline-danger">Reject</button>
+                  </form>
+                  <form method="post" action="{% url 'review:software_request_changes' s.pk %}">
+                    {% csrf_token %}
+                    <input class="form-control form-control-sm mb-1" name="reason"
+                           placeholder="What needs changing?" required>
+                    <button class="btn btn-sm btn-outline-secondary">Request changes</button>
+                  </form>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="text-center text-secondary py-4">
+                No pending software submissions.
+              </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2 class="h5 mt-4">Community-reported releases</h2>
+    <p class="text-secondary small">
+      A community member reported that a product works on a release its vendor has
+      not cited. Approving publishes that release on the listing at community level.
+      Rejecting deletes the report, so the same release can be reported again later.
+    </p>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Product</th><th>Release</th><th>Reported by</th>
+              <th class="text-end">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in reported_majors %}
+              <tr>
+                <td>
+                  <a href="{{ row.software.get_absolute_url }}">{{ row.software.name }}</a>
+                  <div class="text-secondary small">{{ row.software.vendor.name }}</div>
+                </td>
+                <td class="fw-semibold">AlmaLinux {{ row.release.major }}</td>
+                <td class="small">{{ row.proposed_by|default:"unknown" }}</td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'review:software_major_approve' row.pk %}"
+                        class="d-inline">
+                    {% csrf_token %}
+                    <button class="btn btn-sm btn-success">Approve</button>
+                  </form>
+                  <form method="post" action="{% url 'review:software_major_reject' row.pk %}"
+                        class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="reason" value="Rejected from the queue.">
+                    <button class="btn btn-sm btn-outline-danger">Reject</button>
+                  </form>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="text-center text-secondary py-4">
+                No community-reported releases waiting.
+              </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2 class="h5 mt-4">Software listing edits</h2>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Submitted</th><th>Product</th><th>Proposer</th><th>Proposed</th>
+              <th class="text-end">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in software_edits %}
+              <tr>
+                <td class="text-secondary small">{{ p.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td class="fw-semibold">{{ p.software.name }}</td>
+                <td class="small">{{ p.proposed_by }}</td>
+                <td class="small">
+                  {% if p.name %}<div>Name: {{ p.name }}</div>{% endif %}
+                  {% if p.description %}<div class="text-secondary">Description changed</div>{% endif %}
+                </td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'review:software_edit_approve' p.pk %}"
+                        class="d-inline">
+                    {% csrf_token %}
+                    <button class="btn btn-sm btn-success">Approve</button>
+                  </form>
+                  <form method="post" action="{% url 'review:software_edit_reject' p.pk %}"
+                        class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="reason" value="Rejected from the queue.">
+                    <button class="btn btn-sm btn-outline-danger">Reject</button>
+                  </form>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="text-center text-secondary py-4">
+                No pending software edits.
+              </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tab-validation-runs" role="tabpanel">
+    {% include "review/_run_queue_table.html" with runs=validation_runs empty="No pending validation or collect runs." %}
+  </div>
+
+  <div class="tab-pane fade" id="tab-benchmark-runs" role="tabpanel">
+    {% include "review/_run_queue_table.html" with runs=benchmark_runs empty="No pending benchmark runs." %}
+  </div>
+
+  {% if quarantined_runs %}
+    <div class="tab-pane fade" id="tab-quarantined-runs" role="tabpanel">
+      <div class="alert alert-danger">
+        These runs report an operating system other than AlmaLinux. They cannot be
+        approved, published, or counted as certification evidence. Open one to
+        reject it, or to release it if its report is wrong about the OS.
+      </div>
+      {% include "review/_run_queue_table.html" with runs=quarantined_runs empty="Nothing quarantined." %}
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

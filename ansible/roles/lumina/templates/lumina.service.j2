@@ -1,0 +1,32 @@
+[Unit]
+Description=Lumina hardware certification catalog (gunicorn)
+After=network.target
+
+[Service]
+User={{ lumina_user }}
+Group={{ lumina_group }}
+WorkingDirectory={{ lumina_app_dir }}
+EnvironmentFile=/etc/lumina.env
+# gunicorn 26 keeps its control-server socket under $HOME, which ProtectSystem=strict makes read-only:
+# "Control server error: [Errno 30] Read-only file system: '/opt/lumina/.gunicorn'" in every start.
+# The runtime directory is writable and ephemeral, which is what that file wants to be.
+Environment=HOME=/run/lumina
+RuntimeDirectory=lumina
+ExecStart={{ lumina_venv }}/bin/gunicorn lumina.wsgi:application \
+    --bind {{ lumina_bind_tcp | bool | ternary(lumina_bind_host ~ ':' ~ lumina_bind_port, 'unix:' ~ lumina_socket) }} \
+    --workers {{ lumina_gunicorn_workers }} \
+    --timeout {{ lumina_gunicorn_timeout }} \
+    --access-logfile {{ lumina_log_dir }}/access.log \
+    --error-logfile {{ lumina_log_dir }}/error.log
+Restart=on-failure
+RestartSec=5
+
+# Security hardening; gunicorn doesn't need any of these.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{ lumina_media_root }} {{ lumina_log_dir }} /run/lumina
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

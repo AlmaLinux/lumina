@@ -1,0 +1,58 @@
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          {% comment %}"System" was accurate while every run was a machine. This cell now holds
+             the component on a scoped run, and mislabelling it here is worse than on the
+             submitter's side: this is the queue a reviewer decides approvals from.{% endcomment %}
+          <th>Received</th><th>Type</th><th>Hardware</th><th>Submitter</th>
+          <th>AlmaLinux</th><th>Status</th><th class="text-end"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td class="text-secondary small">{{ run.received_at|date:"Y-m-d H:i" }}</td>
+            <td><span class="badge text-bg-info">{{ run.get_run_type_display }}</span></td>
+            <td>
+              <div class="fw-semibold">
+                {{ run.display_name }}
+                {% if run.is_scoped %}
+                  <span class="badge bg-purple-lt">{{ run.scope_labels|join:" + " }} only</span>
+                {% endif %}
+              </div>
+              <div class="text-secondary small">
+                {% if run.is_scoped %}
+                  {% comment %}The host, named as the host. The CPU and board below belong to the
+                     machine, which a scoped run says nothing about.{% endcomment %}
+                  in {{ run.host_name }}
+                {% else %}
+                  {{ run.cpu_model }}
+                  {% if run.effective_system_kind == "prebuilt" and run.board_model %} · {{ run.board_model }}{% endif %}
+                {% endif %}
+              </div>
+            </td>
+            <td class="small">{{ run.submitter }}</td>
+            <td class="small">
+              {% if run.alma_release %}{{ run.alma_release.major }}{% if run.alma_minor is not None %}.{{ run.alma_minor }}{% endif %}
+              {% elif not run.ran_on_almalinux %}
+                {% comment %}There is no release *because* it is not AlmaLinux.
+                   Naming the distribution is more use than the blank cell a
+                   missing release would otherwise leave.{% endcomment %}
+                <span class="text-danger">{{ run.host_os_id|default:"unknown OS" }}{% if run.environment.os.version_id %} {{ run.environment.os.version_id }}{% endif %}</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="status-pill status-{{ run.status }}">{{ run.get_status_display }}</span>
+              {% if run.pre_release %}<span class="badge text-bg-warning">pre-release</span>{% endif %}
+            </td>
+            <td class="text-end"><a class="btn btn-sm btn-primary" href="{% url 'review:run_detail' run.pk %}">Review</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-secondary py-4">{{ empty }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -1,0 +1,142 @@
+---
+# Override these in your playbook or inventory. Values here are safe defaults
+# for a dedicated AlmaLinux host running nothing else.
+
+lumina_user: lumina
+lumina_group: lumina
+lumina_home: /opt/lumina
+lumina_app_dir: "{{ lumina_home }}/app"
+lumina_venv: "{{ lumina_home }}/venv"
+lumina_media_root: /var/lib/lumina/media
+lumina_static_root: /var/lib/lumina/static
+lumina_log_dir: /var/log/lumina
+
+# Git source. Set to a specific tag/SHA in production.
+lumina_repo: https://github.com/AlmaLinux/lumina.git
+lumina_version: main
+
+# Which settings module the service runs. Production is the default; a dev host uses
+# ``lumina.settings.devstack``, which turns OIDC off and mounts a password login, so the box is
+# usable without a Keycloak realm behind it.
+lumina_settings_module: lumina.settings.prod
+
+# Whether to open the web ports in firewalld. Only acts when firewalld is actually running, so a
+# host without it, or one where the network is fenced somewhere else, is untouched either way.
+lumina_manage_firewall: true
+
+# Whether nginx terminates TLS. True assumes a certificate already exists at the paths below,
+# managed out of band by certbot or equivalent. A dev host reachable by IP has no certificate and no
+# DNS name to get one for, so it serves plain HTTP instead; nothing else about the vhost changes.
+lumina_tls_enabled: true
+
+# Left empty so the settings module decides. A dev host sets the console backend, which puts the
+# message in the service journal rather than needing a mail transport on the box: ``send_mail`` runs
+# inside the submit request, so a host with nothing listening on port 25 turns a submission into a
+# 500.
+lumina_email_backend: ""
+
+# Django's DEBUG. Off even on a dev host by default: the box is reachable over the network and a
+# traceback page publishes settings, the request, and local variables to anyone who can provoke one.
+# ``journalctl -u lumina`` has the traceback either way.
+lumina_debug: false
+
+# How nginx reaches gunicorn.
+#
+# TCP on the loopback by default, and that is a deliberate reversal. A unix socket is tidier right up
+# until SELinux is enforcing, where nginx running as httpd_t needs
+# ``unix_stream_socket connectto`` against the domain of the process holding the socket. gunicorn runs
+# as an unconfined service, the targeted policy does not grant that, and **no file label fixes it**:
+# the socket can be mode 0777 and correctly labelled httpd_var_run_t and nginx still gets
+#
+#     connect() to unix:/run/lumina/gunicorn.sock failed (13: Permission denied)
+#
+# with nothing in ``ausearch``, because that denial is dontaudit'd. Diagnosed from exactly that on an
+# enforcing EC2 host after the label was already right.
+#
+# TCP on 127.0.0.1 needs only ``httpd_can_network_connect``, which this role already sets, and which
+# was presumably why that boolean was here before anything used TCP. Set ``lumina_bind_tcp: false`` to
+# go back to the socket, on a host where you have added a policy module for it.
+lumina_bind_tcp: true
+lumina_bind_host: 127.0.0.1
+lumina_bind_port: 8001
+# Used only when lumina_bind_tcp is false.
+lumina_socket: /run/lumina/gunicorn.sock
+lumina_gunicorn_workers: 4
+lumina_gunicorn_timeout: 60
+
+# Public hostname, used in nginx vhost + ALLOWED_HOSTS.
+lumina_hostname: lumina.example.com
+lumina_allowed_hosts: "{{ lumina_hostname }}"
+
+# Required secrets/config - set these in group_vars or ansible-vault.
+lumina_secret_key: ""
+lumina_db_name: lumina
+lumina_db_user: lumina
+lumina_db_password: ""
+lumina_db_host: "127.0.0.1"
+lumina_db_port: 3306
+lumina_valkey_url: "redis://127.0.0.1:6379/0"
+
+lumina_oidc_client_id: ""
+lumina_oidc_client_secret: ""
+lumina_oidc_issuer: ""  # e.g. https://keycloak.example.com/realms/almalinux
+# Only set this if the realm has a client scope by that name assigned to the client. Keycloak
+# rejects the whole sign-in with invalid_scope for a scope the client has not been given, so the
+# default asks for nothing that is not built in; the groups claim comes from a mapper instead.
+lumina_oidc_scopes: ""  # e.g. "openid email profile groups"
+lumina_email_host: localhost
+lumina_email_port: 25
+lumina_default_from_email: "lumina@{{ lumina_hostname }}"
+lumina_review_notify_emails: ""  # comma-separated
+
+# TLS certificates, and where they come from.
+#
+# The two are not exclusive, and using both is the point:
+#
+#   lumina_tls_selfsigned   generate one on the host if none exists. Instant, needs nothing from the
+#                           outside world, and untrusted.
+#   lumina_certbot          also ask Let's Encrypt for a real one. Needs a public name and a reachable
+#                           port 80, and can be slow, rate-limited, or simply refused.
+#
+# With both on, nginx serves the self-signed certificate from the first deploy and switches to the
+# Let's Encrypt one as soon as there is one. A deploy therefore never waits on ACME and never fails
+# because of it, and the site is never without TLS. Once the real certificate exists it is used and
+# never asked for again.
+lumina_tls_selfsigned: false
+lumina_tls_selfsigned_days: 3650
+
+lumina_certbot: false
+# Required for certbot: the ACME account address, which is where expiry warnings go.
+lumina_certbot_email: ""
+# Let's Encrypt staging: untrusted certificates, far looser rate limits. Worth one run when setting
+# this up on a name that matters.
+lumina_certbot_staging: false
+# How long to leave certbot alone after a failed attempt. Let's Encrypt allows five failed validations
+# an hour per account, and a busy branch can deploy more often than that: without a back-off, a
+# misconfigured DNS record turns every merge into another failure against that limit.
+lumina_certbot_retry_after: 3600
+lumina_certbot_timeout: 120
+lumina_acme_webroot: /var/lib/lumina/acme
+lumina_certbot_marker: /var/lib/lumina/certbot-last-failure
+
+# The name a generated certificate is issued for. lumina_hostname is ``_`` when nothing set it, which
+# is nginx's catch-all and not a name a certificate can carry.
+lumina_tls_cert_name: >-
+  {{ (lumina_hostname == '_') | ternary(ansible_facts.fqdn | default('localhost'), lumina_hostname) }}
+
+# The two candidate locations. Which one nginx is pointed at is decided during the run, by whether the
+# Let's Encrypt certificate exists yet; see ``lumina_tls_cert`` in the task file.
+lumina_tls_selfsigned_cert: "/etc/pki/tls/certs/{{ lumina_tls_cert_name }}.crt"
+lumina_tls_selfsigned_key: "/etc/pki/tls/private/{{ lumina_tls_cert_name }}.key"
+# certbot's state directory. A variable because three separate things under it have to be read to
+# know whether certbot can renew in place: the leaf, its key, and the renewal config that makes the
+# whole thing a lineage.
+lumina_letsencrypt_dir: /etc/letsencrypt
+lumina_tls_le_dir: "{{ lumina_letsencrypt_dir }}/live/{{ lumina_tls_cert_name }}"
+lumina_tls_le_renewal: "{{ lumina_letsencrypt_dir }}/renewal/{{ lumina_tls_cert_name }}.conf"
+lumina_tls_le_cert: "{{ lumina_tls_le_dir }}/fullchain.pem"
+lumina_tls_le_key: "{{ lumina_tls_le_dir }}/privkey.pem"
+
+# Set these to serve a certificate this role does not manage, with both of the above off.
+lumina_tls_cert: "{{ lumina_tls_selfsigned_cert }}"
+lumina_tls_key: "{{ lumina_tls_selfsigned_key }}"

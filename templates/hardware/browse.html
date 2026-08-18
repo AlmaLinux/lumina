@@ -1,0 +1,38 @@
+{% extends "base_public.html" %}
+{% block title %}Certified {{ kind }} - AlmaLinux Hardware Catalog{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb" aria-label="breadcrumbs">
+  <li class="breadcrumb-item"><a href="{% url 'core:home' %}">Catalog</a></li>
+  <li class="breadcrumb-item active">{{ kind|capfirst }}</li>
+</ol>
+
+<div class="page-header">
+  <div class="row align-items-end">
+    <div class="col">
+      <h1 class="page-title">Certified {{ kind }}</h1>
+    </div>
+    <div class="col-auto">
+      <form hx-get="{{ request.path }}" hx-target="#results" hx-push-url="true" hx-trigger="submit, input changed delay:400ms from:#catalog-search">
+        {% include "catalog/_carried_filters.html" %}
+        <div class="input-icon">
+          <span class="input-icon-addon"><i class="ti ti-search"></i></span>
+          <input id="catalog-search" class="form-control" type="search" name="q"
+                 placeholder="Search by name, vendor, model…"
+                 value="{{ active_filters.q.0|default:'' }}" style="width: 22rem;">
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="row mt-3 g-3">
+  <aside class="col-lg-3">
+    <div class="filter-panel">{% include "catalog/_filter_panel.html" %}</div>
+  </aside>
+  <section class="col-lg-9">
+    <div id="results">{% include "hardware/_results.html" %}</div>
+  </section>
+</div>
+
+{% endblock %}

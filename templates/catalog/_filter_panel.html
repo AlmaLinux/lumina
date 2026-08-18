@@ -1,0 +1,116 @@
+{% load lumina_filters %}
+{% comment %}
+Explicit path in hx-get, not "": HTMX resolves "" via document.location which
+carries the previous query string along. That caused unchecked filter
+checkboxes to stick because their parameter name was re-sent with an empty
+value rather than dropped. request.path is path-only, so HTMX replaces the
+entire query string with the current form data.
+{% endcomment %}
+<form hx-get="{{ request.path }}" hx-target="#results" hx-push-url="true" hx-trigger="change">
+  <input type="hidden" name="q" value="{{ active_filters.q.0|default:'' }}">
+
+  {% comment %}
+    AlmaLinux compatibility filter: lives outside the generic taxonomy
+    because AlmaLinux versions have structured semantics (major + minor)
+    and aren't user-proposable. We filter on major only here; finer-grained
+    "runs on 10.2" filtering can be added later if demand appears.
+  {% endcomment %}
+  {% if releases %}
+    <div class="card card-sm mb-2" data-category="alma">
+      <div class="card-body py-2 px-3">
+        <h3 class="filter-group-title">AlmaLinux compatibility</h3>
+        <div class="filter-values">
+          {% for r in releases %}
+            <label class="form-check mb-1">
+              <input class="form-check-input" type="checkbox"
+                     name="alma" value="{{ r.major }}"
+                     {% if r.major|stringformat:"s" in active_filters|get_item:"alma" %}checked{% endif %}>
+              <span class="form-check-label">{{ r }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if kind == "components" and component_kinds %}
+    <div class="card card-sm mb-2" data-category="kind">
+      <div class="card-body">
+        <h3 class="filter-group-title">Type</h3>
+        {% for k in component_kinds %}
+          <label class="form-check">
+            <input class="form-check-input" type="checkbox"
+                   name="kind" value="{{ k.value }}"
+                   {% if k.value in active_filters|get_item:"kind" %}checked{% endif %}>
+            <span class="form-check-label">{{ k.label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% comment %}Gated on the pool, not on ``vendors``. Keyed off the rendered list,
+     a search that matched nothing would take the whole card away - search box
+     included - leaving no way to clear the term that emptied it. The card belongs
+     on the page whenever the catalog has vendors at all.{% endcomment %}
+  {% if vendor_pool_total %}
+    {% comment %}Modelled like a taxonomy category card but pulls from the Vendor
+       table rather than CategoryValue. Text-only on purpose: logos of wildly
+       different aspect ratios made the sidebar look messy.{% endcomment %}
+    <div class="card card-sm mb-2" data-category="vendor">
+      <div class="card-body py-2 px-3">
+        <h3 class="filter-group-title">Vendor</h3>
+        {% comment %}Searched on the server, not in the browser. The list is
+           windowed, so filtering only what is already rendered would find nothing
+           for most vendors once the catalog has more than a couple of dozen -
+           worse than no search, because it reads as "no such vendor".
+
+           `hx-target` names the container so the swap replaces the options and
+           leaves this input, and the caret in it, alone.
+
+           Gated on the *pool*, not on how many the current term matched.
+           On the matched count, narrowing far enough would remove the box you are
+           typing into and leave no way to clear it.{% endcomment %}
+        {% if vendor_search_url and vendor_pool_total > 8 %}
+          <input type="search" class="form-control form-control-sm mb-2"
+                 placeholder="Search vendors…"
+                 name="vendor_q" value="{{ vendor_query }}"
+                 hx-get="{{ vendor_search_url }}"
+                 hx-target="#vendor-options"
+                 hx-swap="outerHTML"
+                 hx-trigger="keyup changed delay:250ms, search"
+                 hx-params="vendor_q"
+                 aria-label="Search vendors">
+        {% endif %}
+        {% include "catalog/_vendor_options.html" %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% for category in categories %}
+    {% with approved_values=category.values.all|approved_values_only %}
+      {% if approved_values %}
+        <div class="card card-sm mb-2" data-category="{{ category.slug }}">
+          <div class="card-body py-2 px-3">
+            <h3 class="filter-group-title">{{ category.name }}</h3>
+            {% if approved_values|length > category.collapsed_limit %}
+              <input type="search" class="form-control form-control-sm mb-2"
+                     placeholder="Search {{ category.name|lower }}…"
+                     data-category-search="{{ category.slug }}">
+            {% endif %}
+            <div class="filter-values" data-collapsed-limit="{{ category.collapsed_limit }}">
+              {% for v in approved_values %}
+                <label class="form-check mb-1">
+                  <input class="form-check-input" type="checkbox"
+                         name="{{ category.slug }}" value="{{ v.slug }}"
+                         {% if v.slug in active_filters|get_item:category.slug %}checked{% endif %}>
+                  <span class="form-check-label">{{ v.value }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    {% endwith %}
+  {% endfor %}
+</form>

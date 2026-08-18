@@ -1,0 +1,37 @@
+{% comment %}The error summary above a form. Expects `form`.
+
+Seven blocks in three shapes before this existed, and the differences were not
+stylistic:
+
+- Four byte-identical copies (submit/start, hardware/propose_edit,
+  vendors/propose_new, vendors/propose_edit) iterated `form.errors.items` and printed
+  the **dict key**, so `add_error("new_vendor_name", ...)` reached the user as
+  "new_vendor_name: Required when proposing a new vendor."
+- `software/propose_edit.html` iterated bound fields for their labels but never
+  rendered `form.non_field_errors`, so a form-level error - the kind
+  `SoftwareEditProposalForm` raises when every field is blank - produced an **empty
+  red alert**. That is the bug this partial fixes rather than propagates.
+- `vendors/claim.html` had it right: human labels *and* non-field errors.
+
+So: labels from the bound fields, non-field errors listed separately and last, and
+the heading and icon from the hardware family. `field.label` rather than the dict key,
+because a submitter reads a form, not a schema.
+
+`software/submit.html` deliberately keeps its own block: it renders per-field errors
+inline beside each input and only needs the form-level ones summarised here.
+{% endcomment %}
+{% if form.errors %}
+  <div class="alert alert-danger" role="alert">
+    <strong><i class="bi bi-exclamation-triangle me-1"></i>Please fix the following:</strong>
+    <ul class="mb-0 mt-2">
+      {% for field in form %}
+        {% for error in field.errors %}
+          <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+        {% endfor %}
+      {% endfor %}
+      {% comment %}Last, and unlabelled: a form-level error is about the submission
+         as a whole, so attaching a field name to it would be a lie.{% endcomment %}
+      {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endif %}

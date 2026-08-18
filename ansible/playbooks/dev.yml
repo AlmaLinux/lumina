@@ -1,0 +1,325 @@
+---
+# A working dev instance of lumina on one AlmaLinux host, deployed by CI on every merge to main.
+#
+# The lumina role is production-shaped: it expects MariaDB, Valkey, a TLS certificate, and a Keycloak
+# realm to exist somewhere else, because in production they do. A dev box has none of those, so this
+# play supplies the database and cache itself and points the role at ``lumina.settings.devstack``,
+# which drops OIDC and mounts a password login. That is the difference between a deploy that finishes
+# and a deploy somebody can log into.
+#
+# Everything here is idempotent. It runs on every merge, so anything that is not idempotent is a
+# deploy that breaks the second time.
+- name: Deploy the lumina dev environment
+  hosts: lumina_dev
+  become: true
+
+  vars:
+    lumina_settings_module: lumina.settings.devstack
+    # HTTPS, from a certificate generated on the host.
+    #
+    # Self-signed rather than certbot for a dev box: it needs nothing from the outside world, so a
+    # deploy never waits on an ACME round trip and can never be held up or rate-limited by one. The
+    # cost is that clients do not trust it, which for an environment whose whole purpose is to be
+    # clicked around in by people who know what it is, is not much of a cost. Browsers show a warning
+    # once; the outside-in check in CI passes -k.
+    #
+    # Read through lumina_dev_tls so an inventory can turn it off, for the usual precedence reason.
+    lumina_tls_enabled: "{{ lumina_dev_tls | default(true) }}"
+    lumina_tls_selfsigned: "{{ lumina_dev_tls | default(true) }}"
+    # And ask for a real one as well, when there is an address to register with. The self-signed
+    # certificate serves from the first deploy, certbot runs afterwards, and nginx switches to the real
+    # certificate the moment there is one. A certbot that fails, or is slow, or is rate-limited, leaves
+    # a working HTTPS site behind and does not fail the deploy.
+    lumina_certbot: "{{ (lumina_dev_certbot_email | default('')) | length > 0 }}"
+    lumina_certbot_email: "{{ lumina_dev_certbot_email | default('') }}"
+    lumina_certbot_staging: "{{ lumina_dev_certbot_staging | default(false) }}"
+    # Keycloak, when a realm has been configured for this host. Supplying an issuer and a client id
+    # is what switches the dev box off its password form and onto the production login path: the
+    # settings module keeps mozilla_django_oidc when these are set, and lumina/urls.py mounts the
+    # password form only when that app is absent. With them unset the box keeps the password form,
+    # because a dev host nobody can log into is not a dev host.
+    lumina_oidc_client_id: "{{ lumina_dev_oidc_client_id | default('') }}"
+    lumina_oidc_client_secret: "{{ lumina_dev_oidc_client_secret | default('') }}"
+    lumina_oidc_issuer: "{{ lumina_dev_oidc_issuer | default('') }}"
+    # ``send_mail`` runs inside the submit request and there is no mail transport here, so the
+    # message goes to the journal: journalctl -u lumina.
+    lumina_email_backend: django.core.mail.backends.console.EmailBackend
+    lumina_db_host: 127.0.0.1
+    lumina_valkey_url: "redis://127.0.0.1:6379/0"
+    # ``devstack`` sets ALLOWED_HOSTS to * anyway; this only reaches the vhost's server_name, and
+    # ``_`` accepts whatever name or address the box is reached by.
+    lumina_hostname: "{{ lumina_dev_hostname | default('_') }}"
+
+    # Where the generated secret key lives. Generated once and kept, because regenerating it on every
+    # deploy would invalidate every session and every signed URL on each merge.
+    lumina_secret_key_file: /etc/lumina-secret-key
+
+    # ``lumina_dev_seed`` and ``lumina_dev_reset`` are deliberately NOT defined here. A play var
+    # outranks an inventory var, so defining them would mean the only way to turn them on is -e, and
+    # setting them in an inventory would silently do nothing. They are read with a default at the two
+    # places they are used instead, so inventory, group vars, and -e all work.
+  pre_tasks:
+    # Checked before anything is changed, because getting this wrong locks everybody out and the
+    # symptom is not obviously about a missing secret. With an issuer and a client id but no secret,
+    # the settings module counts OIDC as configured, so the password form is removed, and then every
+    # sign-in fails at the token exchange with invalid_client. A host with no way in at all.
+    - name: Refuse a half-configured Keycloak
+      ansible.builtin.assert:
+        that: (lumina_oidc_client_secret | default('') | length) > 0
+        fail_msg: >-
+          lumina_oidc_issuer and lumina_oidc_client_id are set but lumina_oidc_client_secret is
+          empty. Configuring a realm removes this host's password login, so deploying like this
+          would leave nobody able to sign in: OIDC would be on and every token exchange would fail
+          with invalid_client. From CI this is the DEV_OIDC_CLIENT_SECRET *secret* (not a variable);
+          from a laptop it is -e lumina_dev_oidc_client_secret=...
+      when:
+        - (lumina_oidc_issuer | default('') | length) > 0
+        - (lumina_oidc_client_id | default('') | length) > 0
+
+    - name: Install the services the role expects to find already running
+      ansible.builtin.dnf:
+        name:
+          - mariadb-server
+          - valkey
+          - python3-PyMySQL
+        state: present
+
+    - name: Enable and start MariaDB and Valkey
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - mariadb
+        - valkey
+
+    # Generated on the host rather than passed in from CI. A dev key is not worth a secret, and one
+    # generated here cannot leak through a workflow log or an environment variable.
+    - name: Look for an existing secret key
+      ansible.builtin.stat:
+        path: "{{ lumina_secret_key_file }}"
+      register: lumina_secret_key_stat
+
+    - name: Generate a secret key on first deploy
+      ansible.builtin.copy:
+        content: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=50') }}\n"
+        dest: "{{ lumina_secret_key_file }}"
+        owner: root
+        group: root
+        # 0600, and deliberately not group-readable by lumina: nothing but this play reads it, and
+        # the value reaches the service through /etc/lumina.env. Grouping it to lumina also cannot
+        # work here, because pre_tasks run before the role that creates that group.
+        mode: "0600"
+      when: not lumina_secret_key_stat.stat.exists
+
+    - name: Read the secret key
+      ansible.builtin.slurp:
+        src: "{{ lumina_secret_key_file }}"
+      register: lumina_secret_key_slurp
+
+    - name: Use it
+      ansible.builtin.set_fact:
+        lumina_secret_key: "{{ (lumina_secret_key_slurp.content | b64decode).strip() }}"
+
+    - name: Generate a database password on first deploy
+      ansible.builtin.copy:
+        content: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=32') }}\n"
+        dest: /etc/lumina-db-password
+        owner: root
+        group: root
+        mode: "0600"
+        # Never overwrite: a regenerated password would no longer match the database user's.
+        force: false
+
+    - name: Read the database password
+      ansible.builtin.slurp:
+        src: /etc/lumina-db-password
+      register: lumina_db_password_slurp
+
+    - name: Use it
+      ansible.builtin.set_fact:
+        lumina_db_password: "{{ (lumina_db_password_slurp.content | b64decode).strip() }}"
+
+    # seed_devstack takes these from the environment and falls back to "admin" and "reviewer". A
+    # superuser whose password is "admin", on a box anyone can reach, is not a dev convenience: it is
+    # an open door to Django's admin.
+    #
+    # Written as an env file the seed command sources, rather than passed through the task's
+    # environment. Ansible would print them, so that route needs ``no_log: true``, and no_log hides
+    # the task's failures too - which cost a debugging round here when the seed failed and the log
+    # said only that the output had been censored.
+    - name: Generate demo account passwords on first deploy
+      ansible.builtin.copy:
+        content: |
+          DEVSTACK_ADMIN_PASSWORD={{ lookup('password', '/dev/null chars=ascii_letters,digits length=20') }}
+          DEVSTACK_REVIEWER_PASSWORD={{ lookup('password', '/dev/null chars=ascii_letters,digits length=20') }}
+        dest: /etc/lumina-dev-accounts.env
+        owner: root
+        group: root
+        mode: "0600"
+        # Never regenerate: seed_devstack only sets a password when it creates the account, so a new
+        # value here would not reach an existing one and the file would start lying.
+        force: false
+
+    # Before the role, which migrates as a handler and needs somewhere to migrate into.
+    - name: Drop the database, on a deliberate reset only
+      ansible.mysql.mysql_db:
+        name: "{{ lumina_db_name }}"
+        state: absent
+        login_unix_socket: /var/lib/mysql/mysql.sock
+      when: lumina_dev_reset | default(false) | bool
+
+    - name: Create the database
+      ansible.mysql.mysql_db:
+        name: "{{ lumina_db_name }}"
+        # utf8mb4 throughout: the catalog stores vendor and model strings as reported by firmware.
+        encoding: utf8mb4
+        collation: utf8mb4_unicode_ci
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Create the database user
+      ansible.mysql.mysql_user:
+        name: "{{ lumina_db_user }}"
+        password: "{{ lumina_db_password }}"
+        host: "{{ lumina_db_host }}"
+        priv: "{{ lumina_db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Let the application connect to the database and cache (SELinux)
+      ansible.posix.seboolean:
+        name: httpd_can_network_connect_db
+        state: true
+        persistent: true
+      # Same guard as the role uses, and deliberately not ``failed_when: false``: ignoring the result
+      # would also ignore a real refusal on an enforcing host, which is the one place this matters.
+      when: ansible_selinux.status | default('disabled') == 'enabled'
+
+  roles:
+    - lumina
+
+  post_tasks:
+    # Converge the schema explicitly, rather than relying on the role's handler having fired.
+    #
+    # The handler only runs when something notified it, which means when the code changed. A reset
+    # drops the database while the checkout stays exactly where it was, so nothing notifies, nothing
+    # migrates, and the seed below meets an empty schema: "Table 'lumina.auth_user' doesn't exist".
+    # Running it here is a second or two on an up-to-date database and removes the whole class of
+    # "the handler did not fire this time" failures.
+    - name: Ensure the database schema is current
+      ansible.builtin.shell:
+        cmd: >-
+          set -a && . /etc/lumina.env && set +a
+          && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py migrate --noinput
+      become: true
+      become_user: "{{ lumina_user }}"
+      # A convergence check, not a change: the handler reports the interesting case.
+      changed_when: false
+
+    # This is the part that makes the box *usable*: accounts to log in as, and enough catalog data
+    # that the pages have something on them. Guarded, because it creates records and every merge runs
+    # this play.
+    - name: Seed demo data
+      # Sourced from /etc/lumina.env for the same reason the role's handlers do it: that file is the
+      # configuration, and restating its variables here would be a second copy to keep in step.
+      ansible.builtin.shell:
+        cmd: >-
+          set -a && . /etc/lumina.env && . /etc/lumina-dev-accounts.env && set +a
+          && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py seed_devstack
+      # root, not the service user: /etc/lumina-dev-accounts.env is 0600 root. seed_devstack only
+      # writes to the database, so it needs nothing the service user owns.
+      become: true
+      when: (lumina_dev_seed | default(false) | bool)
+            or (lumina_dev_reset | default(false) | bool)
+      changed_when: true
+
+    # A deploy that finishes and leaves a 502 is not a deploy. This asks the box the same question a
+    # person would, through nginx rather than at the socket, so it covers the proxy and the vhost as
+    # well as the application.
+    # Wrapped so a failure explains itself in the CI log. Without the rescue, a deploy that ends in a
+    # 502 tells you only that it ended in a 502, and answering "why" means finding the host and
+    # reading four different places by hand. The 502 case in particular has a handful of causes that
+    # look identical from outside: gunicorn not running, gunicorn running and its workers dying, the
+    # socket missing, or SELinux refusing nginx access to it.
+    - name: Confirm the site answers, and say why if it does not
+      block:
+        # 200 with TLS off, 301 with it on. Asking for 200 unconditionally made turning TLS on fail
+        # its own smoke check: nginx was answering correctly and the check did not know it.
+        - name: Wait for nginx to answer
+          ansible.builtin.uri:
+            url: "http://127.0.0.1/"
+            status_code: [200, 301]
+            follow_redirects: none
+          register: lumina_smoke
+          retries: 10
+          delay: 3
+          until: lumina_smoke.status in [200, 301]
+
+        # Over the loopback and by address, not by name. Going through the public name looked like a
+        # better check and made the deploy depend on the host's own resolver seeing its public DNS: a
+        # box that serves the site perfectly well failed here with "Name or service not known".
+        #
+        # Whether the name resolves and whether anything in front of the box blocks 443 are real
+        # questions, and they belong to the check the workflow runs from outside. This one answers the
+        # question this play can answer: is nginx serving the application over TLS on this host.
+        #
+        # validate_certs is off because the certificate is self-signed by design, and would be a name
+        # mismatch against 127.0.0.1 even when it is not.
+        - name: Wait for the site to answer over TLS
+          ansible.builtin.uri:
+            url: "https://127.0.0.1/"
+            status_code: 200
+            validate_certs: false
+          register: lumina_smoke_tls
+          retries: 10
+          delay: 3
+          until: lumina_smoke_tls.status == 200
+          when: lumina_tls_effective | bool
+
+      rescue:
+        - name: Collect the reason
+          ansible.builtin.shell:
+            # Every command here is allowed to fail: the point is to report whatever the host will
+            # say, not to succeed. pipefail is set because ansible-lint asks for it on a pipe, and it
+            # changes nothing given the ``|| true`` on each line.
+            cmd: |
+              set -o pipefail
+              echo "===== systemctl status lumina ====="
+              systemctl status lumina --no-pager --lines=0 2>&1 || true
+              echo "===== journalctl -u lumina (last 40) ====="
+              journalctl -u lumina --no-pager -n 40 2>&1 || true
+              echo "===== gunicorn error log (last 20) ====="
+              tail -n 20 {{ lumina_log_dir }}/error.log 2>&1 || true
+              echo "===== the socket, with SELinux labels ====="
+              ls -laZ {{ lumina_socket | dirname }} 2>&1 || true
+              echo "===== nginx error log (last 20) ====="
+              tail -n 20 /var/log/nginx/error.log 2>&1 || true
+              echo "===== SELinux mode, and any denials in the last 10 minutes ====="
+              getenforce 2>&1 || echo "SELinux not present"
+              ausearch -m avc -ts recent 2>&1 | tail -n 30 || echo "no denials found (or auditd absent)"
+          register: lumina_why
+          changed_when: false
+          failed_when: false
+
+        # Carried in the failure itself, not only in a preceding task. Whoever reads a CI log copies
+        # the fatal line, and a diagnosis one task further up is a diagnosis nobody pastes.
+        - name: Fail, with the diagnosis attached
+          ansible.builtin.fail:
+            msg: |-
+              The site did not answer 200 through nginx.
+
+              A 502 with nginx running means gunicorn is not reachable on {{ lumina_socket }}. Four
+              things look like this from outside: gunicorn not running, its workers dying on import,
+              no socket, or SELinux refusing nginx access to it. The dump below says which.
+
+              ----- diagnosis from {{ inventory_hostname }} -----
+              {{ lumina_why.stdout | default('(nothing collected)') }}
+              ----- end diagnosis -----
+
+    - name: Report what is running
+      ansible.builtin.debug:
+        msg: >-
+          lumina {{ lumina_version }} is serving on this host
+          ({{ lumina_settings_module }}, DEBUG={{ lumina_debug }}).
+          Seeded account passwords are in /etc/lumina-dev-accounts.env on the host.

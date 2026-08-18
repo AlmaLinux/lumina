@@ -1,0 +1,117 @@
+{% comment %}The comparison itself. Swapped by HTMX when the selection changes,
+   so it is a partial. Expects: subjects, specs, groups, kind_label.{% endcomment %}
+<div id="compare-table">
+{% if subjects|length < min_compare %}
+  <div class="card"><div class="card-body text-secondary">
+    Pick at least {{ min_compare }} {{ kind_label }}s to compare. Each column is
+    the median across every published run of that model, so a figure with more
+    runs behind it is a firmer number.
+  </div></div>
+{% else %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle compare-table">
+      <thead>
+        <tr>
+          <th style="width: 18rem"></th>
+          {% for subject in subjects %}
+            <th>
+              {{ subject.label }}
+              {% if forloop.first %}
+                <span class="badge text-bg-secondary">baseline</span>
+              {% endif %}
+              <div class="text-secondary small fw-normal">
+                {{ subject.run_count }} run{{ subject.run_count|pluralize }}
+              </div>
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% comment %}Hardware first: a 700% all-core gap stops being surprising
+           once the core counts are on screen, and that is the point of the
+           comparison rather than a footnote to it. Rows that differ are marked
+           so the explanation is findable without reading every cell.{% endcomment %}
+        {% for row in specs %}
+          <tr class="{% if row.differs %}compare-differs{% endif %}">
+            <th class="fw-normal text-secondary">
+              {{ row.label }}
+              {% if row.differs %}
+                <span class="visually-hidden">(differs between columns)</span>
+              {% endif %}
+            </th>
+            {% for value in row.values %}
+              <td>{{ value|default:"-" }}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+      {% for group in groups %}
+        <tbody>
+          <tr class="compare-group">
+            <th colspan="{{ subjects|length|add:1 }}">{{ group.label }}</th>
+          </tr>
+          {% for row in group.rows %}
+            <tr>
+              <th class="fw-normal">
+                {{ row.label }}
+                {% comment %}Which way is good has to be on every row: a reader
+                   scanning "36.7 vs 113" cannot know that less is better for
+                   latency and more is better for bandwidth. An arrow fits where
+                   the words do not, with the words kept for assistive tech and
+                   on hover.{% endcomment %}
+                {% if row.lower_is_better %}
+                  <span class="dir-arrow" title="Lower is better"
+                        aria-hidden="true">&darr;</span>
+                  <span class="visually-hidden">lower is better</span>
+                {% elif row.higher_is_better %}
+                  <span class="dir-arrow" title="Higher is better"
+                        aria-hidden="true">&uarr;</span>
+                  <span class="visually-hidden">higher is better</span>
+                {% endif %}
+                <div class="text-secondary small">
+                  {% if row.show_metric %}{{ row.metric_label }} · {% endif %}{{ row.unit }}
+                  {% if row.mixed_versions %}
+                    {% comment %}Blank cells below are a version gap, not a
+                       missing test, and saying so is the difference between an
+                       honest table and a confusing one.{% endcomment %}
+                    · <span class="text-warning-emphasis">v{{ row.version }} only</span>
+                  {% endif %}
+                </div>
+              </th>
+              {% for cell in row.cells %}
+                <td>
+                  {% if cell.present %}
+                    <span class="compare-value">{{ cell.display }}</span>
+                    {% if cell.delta and cell.delta.text %}
+                      <span class="compare-delta {% if cell.delta.better %}is-better{% elif cell.delta.better == False %}is-worse{% endif %}">
+                        {{ cell.delta.text }}
+                        {% if cell.delta.better %}better{% elif cell.delta.better == False %}worse{% endif %}
+                      </span>
+                    {% endif %}
+                    <div class="text-secondary small">
+                      {{ cell.samples }} run{{ cell.samples|pluralize }}
+                      {% if cell.spread %}· {{ cell.spread }}{% endif %}
+                    </div>
+                  {% else %}
+                    <span class="text-secondary">not measured</span>
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      {% endfor %}
+    </table>
+  </div>
+  <p class="text-secondary small mt-2">
+    Each figure is the median of that model's published runs, not a single
+    result, and the run count beside it is the sample size. Medians rather than
+    averages, so one throttled or noisy run does not move a model's number.
+    {% if kind == "cpu" %}
+      Socket count is part of a column's identity: a dual-socket entry is listed
+      separately, because averaging it with single-socket results would describe
+      neither machine.
+    {% endif %}
+  </p>
+{% endif %}
+</div>

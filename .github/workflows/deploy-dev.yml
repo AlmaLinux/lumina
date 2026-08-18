@@ -1,0 +1,47 @@
+name: Deploy dev
+
+# Deploy the dev environment by hand: another branch, a reseed, or a redeploy of the same thing.
+#
+# The automatic deploy on every push to ``dev`` is a job in ci.yml, gated on the test jobs there. It
+# lives in that file because a ``workflow_run`` trigger only fires from the copy of the workflow on the
+# repository's default branch, so an automatic deploy defined here would not run for a push to dev
+# until this file reached main - silently, with a green CI run and no deploy to explain it.
+#
+# **This workflow cannot wipe the database.** There is no reset input to set, by accident or
+# otherwise, and the reusable workflow it calls defaults reset to false. Dropping the database is
+# deploy-dev-reset.yml, which asks for a typed confirmation.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy (a branch, tag, or SHA)
+        required: false
+        default: dev
+      seed:
+        description: >-
+          Also run seed_devstack. Creates demo listings and accounts if they are missing, and changes
+          no existing data. Needed once on a new host
+        type: boolean
+        required: false
+        default: false
+      retry_certbot:
+        description: >-
+          Ask Let's Encrypt again even if the last attempt failed less than an hour ago. Without this
+          a retry inside that hour skips certbot and changes nothing
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Deliberately not gated on tests. A manual deploy is somebody choosing to put a specific ref on
+    # the box, which is the whole point of it; the automatic path in ci.yml is the one that gates.
+    uses: ./.github/workflows/deploy-dev-run.yml
+    with:
+      ref: ${{ inputs.ref || 'dev' }}
+      seed: ${{ inputs.seed || false }}
+      retry_certbot: ${{ inputs.retry_certbot || false }}
+    secrets: inherit

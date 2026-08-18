@@ -1,0 +1,83 @@
+# Self-contained, disposable dev stack. Not for production.
+#
+# Quick start:
+#   docker compose up --build
+#   open http://localhost:8000 (catalog) / http://localhost:8000/admin (admin/admin)
+#
+# If something else already owns host port 8000:
+#   LUMINA_PORT=8100 docker compose up --build
+#
+# Tear down and wipe all data:
+#   docker compose down -v
+
+name: lumina-devstack
+
+services:
+  db:
+    image: docker.io/library/mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: devroot
+      MARIADB_DATABASE: lumina
+      MARIADB_USER: lumina
+      MARIADB_PASSWORD: lumina
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      retries: 20
+    volumes:
+      # Replayed on every start, because the tmpfs datadir below means every start is a
+      # fresh initialization. Grants the app user rights on Django's test_* database so
+      # the MariaDB test job works on a stack nobody has hand-tweaked.
+      - ./devstack/mariadb-init.sql:/docker-entrypoint-initdb.d/10-test-grants.sql:z,ro
+    tmpfs:
+      - /var/lib/mysql  # non-persistent; `docker compose down` wipes state
+
+  valkey:
+    image: docker.io/valkey/valkey:8
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      retries: 10
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    ports:
+      - "8025:8025"  # web UI at http://localhost:8025
+
+  web:
+    build:
+      context: .
+      dockerfile: Containerfile
+    environment:
+      DJANGO_SETTINGS_MODULE: lumina.settings.devstack
+      DJANGO_SECRET_KEY: devstack-insecure-not-for-prod
+      DJANGO_DEBUG: "1"
+      DB_NAME: lumina
+      DB_USER: lumina
+      DB_PASSWORD: lumina
+      DB_HOST: db
+      DB_PORT: "3306"
+      VALKEY_URL: redis://valkey:6379/0
+      EMAIL_HOST: mailpit
+      EMAIL_PORT: "1025"
+      DEFAULT_FROM_EMAIL: lumina@localhost
+      LUMINA_REVIEW_NOTIFY_EMAILS: reviewers@localhost
+      MEDIA_ROOT: /var/lib/lumina/media
+    ports:
+      # Override the host port when 8000 is taken: LUMINA_PORT=8100 podman compose up
+      - "${LUMINA_PORT:-8000}:8000"
+    volumes:
+      # `:z` relabels the host directory so rootless podman + SELinux can
+      # read the bind mount. Docker ignores the flag.
+      - .:/app:z
+      - lumina-media:/var/lib/lumina/media
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+volumes:
+  lumina-media:

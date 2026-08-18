@@ -1,0 +1,201 @@
+{% comment %}Shared inventory/verdict summary for a run - used by public and reviewer detail pages.{% endcomment %}
+<dl class="row mb-0">
+  <dt class="col-sm-3">Run type</dt>
+  <dd class="col-sm-9"><span class="badge text-bg-primary">{{ run.get_run_type_display }}</span></dd>
+
+  {% if verdict is not None %}
+    <dt class="col-sm-3">Certification</dt>
+    <dd class="col-sm-9">
+      {% if verdict %}<span class="badge text-bg-success">PASS</span>
+      {% else %}<span class="badge text-bg-danger">FAIL</span>{% endif %}
+      {% comment %}An unqualified PASS directly above a row naming the machine reads as the machine
+         being certified. Saying what passed is the difference between a component claim and the
+         whole-system claim it was being mistaken for.{% endcomment %}
+      {% if run.is_scoped %}
+        <span class="text-secondary">for the {{ run.scope_labels|join:" and " }} only</span>
+      {% endif %}
+    </dd>
+  {% endif %}
+
+  {% comment %}The claim comes before the inventory, so a reader knows what the rows underneath are
+     evidence for before reading them. On a scoped run everything from "Machine" down is the host
+     the component was measured in.{% endcomment %}
+  {% if run.is_scoped %}
+    <dt class="col-sm-3">Claim</dt>
+    <dd class="col-sm-9">
+      <span class="badge bg-purple-lt">{{ run.scope_labels|join:" + " }} only</span>
+      {{ run.claim_subject }}
+    </dd>
+    <dt class="col-sm-3">Host</dt>
+  {% else %}
+    <dt class="col-sm-3">Machine</dt>
+  {% endif %}
+  <dd class="col-sm-9">
+    {% comment %}effective_* rather than the raw detected fields, so a
+       submitter who has corrected the kind or the name sees their own answer
+       here instead of the firmware's.{% endcomment %}
+    {% if run.effective_system_kind == "custom" %}
+      <span class="badge text-bg-secondary">Custom build</span>
+      {% if run.effective_vendor or run.effective_product %}{{ run.effective_vendor }} {{ run.effective_product }}{% endif %}
+    {% else %}
+      {% comment %}Prebuilt. There used to be a third branch for an "unknown" kind, carrying a
+         "kind unknown" badge; there are two kinds now and custom is the fallback, so a machine
+         either claims to be a vendor-built product or it does not.{% endcomment %}
+      {{ run.effective_vendor }} {{ run.effective_product|default:"-" }}
+    {% endif %}
+  </dd>
+  {% if run.effective_system_kind != "custom" and run.board_model %}
+    <dt class="col-sm-3">Motherboard</dt>
+    <dd class="col-sm-9">{{ run.board_vendor }} {{ run.board_model }}</dd>
+  {% endif %}
+  <dt class="col-sm-3">CPU</dt>
+  {% comment %}Socket count sits with the model because an all-core figure is not
+     interpretable without it: a second socket roughly doubles the result.
+     Cores and threads are machine totals across all sockets.{% endcomment %}
+  <dd class="col-sm-9">
+    {{ run.cpu_model|default:"-" }}
+    {% if run.cpu_sockets %}
+      · {{ run.cpu_sockets }} socket{{ run.cpu_sockets|pluralize }}
+    {% endif %}
+    {% if run.cpu_cores %} · {{ run.cpu_cores }} cores{% endif %}
+    {% if run.cpu_threads %} / {{ run.cpu_threads }} threads{% endif %}
+  </dd>
+  {% comment %}Directly under the CPU row, because that is where someone looking
+     for a CPU capability looks. Collapsed - see the partial.{% endcomment %}
+  {% include "results/_cpu_flags.html" %}
+  {% if run.gpu_model %}
+    <dt class="col-sm-3">GPU</dt>
+    <dd class="col-sm-9">
+      {{ run.gpu_model }} <span class="text-secondary">({{ run.gpu_driver }})</span>
+      {% comment %}On a GPU-scoped run this row is the subject, sitting among Motherboard, CPU,
+         Memory and Kernel and indistinguishable from them. Marked so a reader scanning the card
+         can see which line the verdict is about.{% endcomment %}
+      {% if "gpu" in run.claim_scope %}
+        <span class="badge bg-purple-lt">what this run certifies</span>
+      {% endif %}
+    </dd>
+  {% endif %}
+  <dt class="col-sm-3">Memory</dt>
+  <dd class="col-sm-9">
+    {% if run.memory_mb %}{{ run.memory_gb }} GB{% else %}-{% endif %}
+    {% if run.memory_dimm_count %}
+      · {{ run.memory_dimm_count }} &times; {{ run.memory_type|default:"module" }}{{ run.memory_dimm_count|pluralize }}
+      {% if run.memory_speed_mts %}@ {{ run.memory_speed_mts }} MT/s{% endif %}
+    {% endif %}
+  </dd>
+  {% if run.dimms %}
+    {% comment %}How memory is populated moves bandwidth as much as how much of
+       it there is, so the per-module detail is on the page rather than only in
+       the bundle. Collected from DMI type 17 since schema 1.0.{% endcomment %}
+    <dt class="col-sm-3">Memory modules</dt>
+    <dd class="col-sm-9">
+      {% comment %}Four rows fit without crowding, so four or fewer shows in full
+         with no toggle to notice. Beyond that the rest collapses, because a
+         24-DIMM server otherwise pushes the whole run off screen.{% endcomment %}
+      <input type="checkbox" id="dimms-{{ run.pk }}" class="dimm-toggle"
+             aria-controls="dimm-table-{{ run.pk }}">
+      <div class="table-responsive dimm-wrap">
+        <table class="table table-sm mb-0" id="dimm-table-{{ run.pk }}">
+          <thead>
+            <tr>
+              <th>Slot</th><th>Channel</th><th>Size</th><th>Type</th>
+              <th>Speed</th><th>Rank</th><th>Manufacturer</th><th>Part number</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for dimm in run.dimms %}
+              <tr {% if forloop.counter > 4 %}class="dimm-extra"{% endif %}>
+                <td>{{ dimm.locator|default:"-" }}</td>
+                <td>{{ dimm.bank_locator|default:"-" }}</td>
+                <td class="text-nowrap">{% if dimm.size_gb %}{{ dimm.size_gb }} GB{% else %}-{% endif %}</td>
+                <td>{{ dimm.type|default:"-" }}</td>
+                <td class="text-nowrap">
+                  {% if dimm.speed_mts %}{{ dimm.speed_mts }} MT/s{% else %}-{% endif %}
+                  {% if dimm.rated_speed_mts and dimm.rated_speed_mts != dimm.speed_mts %}
+                    <span class="text-secondary">(rated {{ dimm.rated_speed_mts }})</span>
+                  {% endif %}
+                </td>
+                <td>{{ dimm.rank|default:"-" }}</td>
+                <td>{{ dimm.manufacturer|default:"-" }}</td>
+                <td>{{ dimm.part_number|default:"-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if run.dimms|length > 4 %}
+        <label for="dimms-{{ run.pk }}" class="dimm-more btn btn-sm btn-link px-0">
+          <span class="dimm-more-text">Show all {{ run.dimms|length }} modules</span>
+          <span class="dimm-less-text">Show fewer</span>
+        </label>
+      {% endif %}
+      {% if run.memory_slots_total %}
+        <div class="text-secondary small">
+          {{ run.dimms|length }} of {{ run.memory_slots_total }} slots populated
+        </div>
+      {% endif %}
+    </dd>
+  {% endif %}
+  <dt class="col-sm-3">AlmaLinux</dt>
+  <dd class="col-sm-9">{% if run.alma_release %}{{ run.alma_release.major }}{% if run.alma_minor is not None %}.{{ run.alma_minor }}{% endif %}{% else %}-{% endif %}</dd>
+  {% if run.kernel %}
+    {% comment %}Directly under the release, because it is the same question at finer grain:
+       "9.8" does not say which kernel proved the hardware, and a machine needing a driver
+       shipped in a later kernel passes on one and fails on another. A reviewer weighing whether
+       the evidence supports the release floor being claimed is asking exactly this.
+
+       Taint sits with it rather than in a row of its own: a tainted kernel had proprietary or
+       out-of-tree code loaded, so the pass may be evidence about that module rather than about
+       AlmaLinux, and that qualifies the kernel it is beside.{% endcomment %}
+    <dt class="col-sm-3">Kernel</dt>
+    <dd class="col-sm-9">
+      <code>{{ run.kernel }}</code>
+      {% if run.kernel_tainted %}
+        <span class="badge text-bg-warning ms-1">tainted ({{ run.kernel_taint }})</span>
+        <span class="text-secondary small d-block">
+          {% comment %}The decoded reasons, not one blanket explanation. They mean different
+             things to somebody weighing the evidence: a proprietary module says the pass may be
+             about that module, a recent oops says the machine was unwell during the run, live
+             patching says the running kernel is not what the version string names. The raw value
+             stays in the badge so an unmapped bit is still visible.{% endcomment %}
+          {% for reason in run.kernel_taint_reasons %}
+            {{ reason|capfirst }}{% if not forloop.last %};{% endif %}
+          {% empty %}
+            Tainted for a reason this build does not recognize.
+          {% endfor %}
+        </span>
+      {% endif %}
+    </dd>
+  {% endif %}
+  {% if run.driver_loaded_during_run %}
+    {% comment %}Its own row, beside the kernel and after the taint, because it is the same kind of
+       qualification on the same subject: what the pass is evidence of. The suite installs the NVIDIA
+       driver and then tries to bring it up in the running kernel rather than making somebody reboot,
+       which usually works. When it does, the machine that produced these results is running a
+       configuration no boot has applied: the install writes rd.driver.blacklist=nouveau to the
+       kernel command line and regenerates the initramfs, and the next boot is the first to use
+       either. The driver's own packaging says the same, shipping a needs-restarting.d file that
+       makes dnf report a reboot pending for the rest of that boot.
+
+       Not a refusal. The card demonstrably worked, and reviewers weigh this alongside everything
+       else, which is why it reads as a note and not a warning.{% endcomment %}
+    <dt class="col-sm-3">GPU driver</dt>
+    <dd class="col-sm-9">
+      <span class="badge text-bg-secondary">loaded during the run</span>
+      <span class="text-secondary small d-block">
+        Brought up in the running kernel by alma-cert rather than at boot, so this machine had not
+        booted into the configuration the driver install leaves behind.
+      </span>
+      {% comment %}Verbatim, with no capfirst. The taint reasons beside these are filtered that way,
+         which is right for prose and wrong the moment a sentence opens with a module name: it
+         renders nvidia_uvm as Nvidia_uvm, which is not the name of anything.{% endcomment %}
+      {% for note in run.driver_load_notes %}
+        <span class="text-secondary small d-block">{{ note }}</span>
+      {% endfor %}
+    </dd>
+  {% endif %}
+  <dt class="col-sm-3">Suite</dt>
+  <dd class="col-sm-9">{{ run.suite_version }}{% if run.suite_git_commit %} ({{ run.suite_git_commit }}){% endif %}</dd>
+  <dt class="col-sm-3">Submitted by</dt>
+  <dd class="col-sm-9">{{ run.submitter.get_username }} · {{ run.received_at|date:"Y-m-d H:i" }}</dd>
+</dl>

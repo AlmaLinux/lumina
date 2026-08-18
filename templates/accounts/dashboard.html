@@ -1,0 +1,405 @@
+{% extends "base_admin.html" %}
+{% block page_title %}My dashboard{% endblock %}
+{% block content %}
+
+{% comment %}First, above the quick actions. Somebody opens this page to find out whether anything
+   needs them, and the answer should not be below three cards offering to start something new.
+   Renders nothing when there is nothing.{% endcomment %}
+{% include "accounts/_pending_actions.html" %}
+
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <i class="bi bi-plus-circle fs-3 text-primary me-2"></i>
+          <h2 class="h5 mb-0">Submit hardware</h2>
+        </div>
+        <p class="text-secondary small">Add a new System or Component for review.</p>
+        <a href="{% url 'submit:start' %}" class="btn btn-primary btn-sm">Start a submission</a>
+      </div>
+    </div>
+  </div>
+  {% comment %}Beside hardware rather than folded into it: the two catalogs ask
+     for different things, so they are two forms and two entry points. bi-* icon
+     to match the sidebar's software item, not the ti-* used on public pages.
+  {% endcomment %}
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <i class="bi bi-box fs-3 text-primary me-2"></i>
+          <h2 class="h5 mb-0">Submit software</h2>
+        </div>
+        <p class="text-secondary small">Add a software product for review.</p>
+        <a href="{% url 'software:submit' %}" class="btn btn-primary btn-sm">Start a submission</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <i class="bi bi-key fs-3 text-secondary me-2"></i>
+          <h2 class="h5 mb-0">API tokens</h2>
+        </div>
+        <p class="text-secondary small">Short-lived bearer tokens for the AlmaLinux test suite.</p>
+        <div class="d-flex gap-2">
+          <a href="{% url 'accounts:tokens' %}" class="btn btn-outline-primary btn-sm">Manage tokens</a>
+          <a href="{% url 'accounts:activate' %}" class="btn btn-outline-secondary btn-sm">Authorize a machine</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <i class="bi bi-clipboard-data fs-3 text-secondary me-2"></i>
+          <h2 class="h5 mb-0">Test results</h2>
+        </div>
+        <p class="text-secondary small">Runs you submitted with alma-cert, online or by upload.</p>
+        <div class="d-flex gap-2">
+          {% comment %}No "My runs" link. It went to a page listing the same runs with fewer
+             columns, no filter, and no actions, and the two tables further down this page are
+             the better version of it. The embargo badge it had is now on those tables.{% endcomment %}
+          <a href="{% url 'results:upload' %}" class="btn btn-outline-secondary btn-sm">Upload a bundle</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <i class="bi bi-buildings fs-3 text-secondary me-2"></i>
+          <h2 class="h5 mb-0">Vendor memberships</h2>
+        </div>
+        <p class="text-secondary small mb-0">{{ request.user.vendor_memberships.count }} membership{{ request.user.vendor_memberships.count|pluralize }}.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% comment %}How to produce a result, on the page somebody lands on after signing in.
+
+   The front page carries the same command for a visitor who has no account. This one is written
+   for a reader who has one, so it says nothing about accounts and instead names the two ways a
+   result reaches the catalog from here. Those two paths already have pages of their own; what was
+   missing was anything saying they were the two halves of one sequence, or where the sequence
+   starts.
+
+   After the quick-action cards rather than among them: those are four narrow boxes and a shell
+   command does not fit in one, and this is the "how" for the "Submit hardware" they offer.{% endcomment %}
+<div class="card mt-4">
+  <div class="card-body">
+    <div class="d-flex align-items-center mb-2">
+      <i class="bi bi-terminal fs-3 text-secondary me-2"></i>
+      <h2 class="h5 mb-0">Run the certification suite</h2>
+    </div>
+    <p class="text-secondary mb-3">
+      On the machine you want certified. The suite runs the tests and produces a result bundle.
+    </p>
+    <p class="mb-3">{% include "core/_run_the_suite_command.html" %}</p>
+    {% comment %}Both routes, because which one applies is a fact about the machine rather than a
+       preference: a server with no route to this site cannot submit for itself.{% endcomment %}
+    <p class="text-secondary small mb-2">
+      Then get the result here, whichever suits the machine:
+    </p>
+    <ul class="text-secondary small mb-3">
+      <li>
+        <strong>If the machine can reach this site</strong>, run <code>alma-cert register</code> on
+        it and enter the code it shows on
+        <a href="{% url 'accounts:activate' %}">Authorize a machine</a>. It submits its own results
+        from then on.
+      </li>
+      <li>
+        <strong>If it cannot</strong>, produce a bundle with
+        <code>alma-cert bundle &lt;run-id&gt;</code>, copy it off, and
+        <a href="{% url 'results:upload' %}">upload it here</a>. It is processed exactly like an
+        online submission.
+      </li>
+    </ul>
+    <p class="text-secondary small mb-0">
+      Either way the run arrives as a draft, and this page will ask you for anything the catalog
+      needs before a reviewer sees it. A run submitted with <code>--scope</code> is a claim about
+      that component alone, so it is never asked for the host machine's details.
+    </p>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h2 class="h5 card-title mb-0">My vendor memberships</h2>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'vendors:propose_new' %}">
+      <i class="bi bi-plus-circle me-1"></i>Propose new vendor
+    </a>
+  </div>
+  {% if request.user.vendor_memberships.all %}
+    <ul class="list-group list-group-flush">
+      {% for m in request.user.vendor_memberships.all %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <span class="d-flex align-items-center gap-2">
+            {% if m.vendor.logo %}
+              <img src="{{ m.vendor.logo.url }}" alt="" style="max-height: 24px; max-width: 80px;">
+            {% endif %}
+            <span>{{ m.vendor }}</span>
+            <span class="badge text-bg-secondary">{{ m.get_role_display }}</span>
+          </span>
+          {% if m.can_submit %}
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'vendors:propose_edit' m.vendor.slug %}">
+              <i class="bi bi-pencil me-1"></i>Propose edit
+            </a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="card-body text-secondary">You are not a member of any vendor organization.</div>
+  {% endif %}
+</div>
+
+{# --- my hardware and runs: filterable tables ------------------------------ #}
+
+<div class="card mt-4" data-filterable>
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <h2 class="h5 card-title mb-0">My systems <span class="badge text-bg-secondary">{{ my_systems|length }}</span></h2>
+    <input type="search" class="form-control form-control-sm w-auto" placeholder="Filter…" data-table-filter>
+  </div>
+  {% if my_systems %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>System</th><th>Level</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+        <tbody>
+          {% for s in my_systems %}
+            <tr>
+              <td>{% include "hardware/_listing_link.html" with listing=s with_vendor=True only %}</td>
+              <td><span class="badge badge-validation badge-{{ s.validation_level }}">{{ s.get_validation_level_display }}</span></td>
+{% include "accounts/_listing_state.html" with listing=s only %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body text-secondary">No systems yet - validate a machine with <code>alma-cert</code> and list it.</div>
+  {% endif %}
+</div>
+
+<div class="card mt-4" data-filterable>
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <h2 class="h5 card-title mb-0">My components <span class="badge text-bg-secondary">{{ my_components|length }}</span></h2>
+    <input type="search" class="form-control form-control-sm w-auto" placeholder="Filter…" data-table-filter>
+  </div>
+  {% if my_components %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Component</th><th>Type</th><th>Level</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+        <tbody>
+          {% for c in my_components %}
+            <tr>
+              <td>{% include "hardware/_listing_link.html" with listing=c with_vendor=True only %}</td>
+              <td class="text-secondary">{{ c.get_kind_display }}</td>
+              <td><span class="badge badge-validation badge-{{ c.validation_level }}">{{ c.get_validation_level_display }}</span></td>
+{% include "accounts/_listing_state.html" with listing=c only %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body text-secondary">No components yet.</div>
+  {% endif %}
+</div>
+
+{% if my_vendor_claims %}
+  {% comment %}Shown only while a claim is open, so a claimant can see it is
+     waiting rather than wondering whether it submitted at all.{% endcomment %}
+  <div class="card mt-4 border-warning">
+    <div class="card-header">
+      <h2 class="h5 card-title mb-0">My vendor claims</h2>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Vendor</th><th>Submitted</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for claim in my_vendor_claims %}
+            <tr>
+              <td class="fw-semibold">{{ claim.vendor.name }}</td>
+              <td class="text-secondary small">{{ claim.submitted_at|date:"Y-m-d" }}</td>
+              <td>
+                <span class="status-pill status-{{ claim.status }}">{{ claim.get_status_display }}</span>
+                {% if claim.reviewer_notes %}
+                  <div class="text-secondary small">{{ claim.reviewer_notes }}</div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+<div class="card mt-4" data-filterable>
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <h2 class="h5 card-title mb-0">My software <span class="badge text-bg-secondary">{{ my_software|length }}</span></h2>
+    <input type="search" class="form-control form-control-sm w-auto" placeholder="Filter…" data-table-filter>
+  </div>
+  {% if my_software %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>Product</th><th>Releases</th><th>Level</th>
+            <th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in my_software %}
+            <tr>
+              <td>
+                {% comment %}Only a published listing has a public page.
+                   software:detail filters on published, so linking a draft here
+                   is a 404 - which is exactly what it used to be.{% endcomment %}
+                {% if p.published %}
+                  <a href="{{ p.get_absolute_url }}">{{ p.vendor.name }} {{ p.name }}</a>
+                {% else %}
+                  {{ p.vendor.name }} {{ p.name }}
+                  <span class="badge text-bg-secondary ms-1">draft</span>
+                {% endif %}
+              </td>
+              <td class="text-secondary small">
+                {% for row in p.compatibility.all %}
+                  {% if row.status == "approved" %}{{ row.release.major }}{% if not forloop.last %}, {% endif %}{% endif %}
+                {% empty %}-{% endfor %}
+              </td>
+              <td><span class="badge badge-validation badge-{{ p.validation_level }}">{{ p.get_validation_level_display }}</span></td>
+              <td>
+                {% comment %}The submission's status when there is one, because it
+                   is the more specific answer to "what is happening with this
+                   listing" - published/unpublished is the fallback for a product
+                   with no submission of the viewer's own.{% endcomment %}
+                {% if p.latest_submission %}
+                  <span class="status-pill status-{{ p.latest_submission.status }}">
+                    {{ p.latest_submission.get_status_display }}
+                  </span>
+                  {% if p.latest_submission.status == "needs-changes" and p.latest_submission.reviewer_notes %}
+                    <div class="text-secondary small">{{ p.latest_submission.reviewer_notes }}</div>
+                  {% endif %}
+                {% elif p.published %}
+                  <span class="text-success">published</span>
+                {% else %}
+                  <span class="text-secondary">unpublished</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if p.latest_submission.status == "needs-changes" %}
+                  <a class="btn btn-sm btn-primary"
+                     href="{% url 'software:revise' p.latest_submission.uuid %}">Revise</a>
+                {% elif p.user_can_edit and p.published %}
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="{% url 'software:propose_edit' p.slug %}">Propose edit</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body text-secondary">
+      No software yet. <a href="{% url 'software:submit' %}">Submit a product</a>.
+    </div>
+  {% endif %}
+</div>
+
+{% comment %}Each run section is two panes: what the submitter is still working on, and what they
+   have put away. Archived work is theirs and stays reachable; it just stops being the first thing
+   they see. The tabs are the CSS-only pane control from lumina-shared.css, so they keep working
+   whether or not a script loaded.{% endcomment %}
+<div class="card mt-4 pane-group" data-filterable>
+  <input type="radio" name="validation-pane" id="validation-pane-active"
+         class="pane-toggle" checked>
+  <input type="radio" name="validation-pane" id="validation-pane-archived"
+         class="pane-toggle pane-toggle-archived">
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-baseline gap-3">
+      <h2 class="h5 card-title mb-0">My validation runs</h2>
+      <div class="pane-tabs small">
+        <label class="pane-tab pane-tab-active" for="validation-pane-active">
+          Active <span class="badge text-bg-secondary">{{ my_validation_runs|length }}</span>
+        </label>
+        {% if my_archived_validation_runs %}
+          <label class="pane-tab pane-tab-archived" for="validation-pane-archived">
+            Archived <span class="badge text-bg-secondary">{{ my_archived_validation_runs|length }}</span>
+          </label>
+        {% endif %}
+      </div>
+    </div>
+    <input type="search" class="form-control form-control-sm w-auto" placeholder="Filter…" data-table-filter>
+  </div>
+  <div class="pane-active">
+    {% if my_validation_runs %}
+      {% include "accounts/_run_table.html" with runs=my_validation_runs kind="validation" archived=False %}
+    {% else %}
+      <div class="card-body text-secondary">No validation runs yet.</div>
+    {% endif %}
+  </div>
+  <div class="pane-archived">
+    {% include "accounts/_run_table.html" with runs=my_archived_validation_runs kind="validation" archived=True %}
+  </div>
+</div>
+
+<div class="card mt-4 pane-group" data-filterable>
+  <input type="radio" name="benchmark-pane" id="benchmark-pane-active"
+         class="pane-toggle" checked>
+  <input type="radio" name="benchmark-pane" id="benchmark-pane-archived"
+         class="pane-toggle pane-toggle-archived">
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-baseline gap-3">
+      <h2 class="h5 card-title mb-0">My benchmark runs</h2>
+      <div class="pane-tabs small">
+        <label class="pane-tab pane-tab-active" for="benchmark-pane-active">
+          Active <span class="badge text-bg-secondary">{{ my_benchmark_runs|length }}</span>
+        </label>
+        {% if my_archived_benchmark_runs %}
+          <label class="pane-tab pane-tab-archived" for="benchmark-pane-archived">
+            Archived <span class="badge text-bg-secondary">{{ my_archived_benchmark_runs|length }}</span>
+          </label>
+        {% endif %}
+      </div>
+    </div>
+    <input type="search" class="form-control form-control-sm w-auto" placeholder="Filter…" data-table-filter>
+  </div>
+  <div class="pane-active">
+    {% if my_benchmark_runs %}
+      {% include "accounts/_run_table.html" with runs=my_benchmark_runs kind="benchmark" archived=False %}
+    {% else %}
+      <div class="card-body text-secondary">No benchmark runs yet.</div>
+    {% endif %}
+  </div>
+  <div class="pane-archived">
+    {% include "accounts/_run_table.html" with runs=my_archived_benchmark_runs kind="benchmark" archived=True %}
+  </div>
+</div>
+
+<script nonce="{{ request.csp_nonce }}">
+  // Inline table filtering: each [data-filterable] card filters its own rows
+  // by substring, case-insensitive. Rows are few (dashboard caps at 200) so
+  // client-side is instant and needs no round trips.
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("[data-filterable]").forEach((card) => {
+      const input = card.querySelector("[data-table-filter]");
+      if (!input) return;
+      input.addEventListener("input", () => {
+        const needle = input.value.trim().toLowerCase();
+        card.querySelectorAll("tbody tr").forEach((row) => {
+          row.hidden = needle !== "" && !row.textContent.toLowerCase().includes(needle);
+        });
+      });
+    });
+  });
+</script>
+
+{% endblock %}

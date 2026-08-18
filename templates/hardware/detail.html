@@ -1,0 +1,298 @@
+{% extends "base_public.html" %}
+{% load lumina_filters %}
+{% block title %}{{ listing.name }} - AlmaLinux Hardware Catalog{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb" aria-label="breadcrumbs">
+  <li class="breadcrumb-item"><a href="{% url 'core:home' %}">Catalog</a></li>
+  <li class="breadcrumb-item">
+    {% if listing|class_name == 'System' %}
+      <a href="{% url 'hardware:systems' %}">Systems</a>
+    {% else %}
+      <a href="{% url 'hardware:components' %}">Components</a>
+    {% endif %}
+  </li>
+  <li class="breadcrumb-item active">{{ listing.name }}</li>
+</ol>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="row align-items-start">
+      <div class="col">
+        <div class="text-secondary text-uppercase small fw-semibold">{{ listing.vendor.name }}</div>
+        <h1 class="h2 mb-2">{{ listing.name }}</h1>
+        {% if listing.kind %}
+        <span class="badge {% if listing.is_family %}text-bg-primary{% else %}text-bg-light text-secondary{% endif %} component-role me-1">
+          {{ listing.get_kind_display }} {{ listing.get_role_display|lower }}
+        </span>
+      {% endif %}
+      {% if listing.model_number %}<div class="text-secondary">Model {{ listing.model_number }}</div>{% endif %}
+      </div>
+      <div class="col-auto text-end">
+        <span class="badge badge-validation badge-{{ listing.validation_level }} fs-5">{{ listing.get_validation_level_display }}</span>
+        {% comment %}The badge carries the official tier, so this line carries the
+           other half - what the community did. Community-level attestations only:
+           counting the vendor's own runs here would credit them to the community
+           and make the number agree with nothing in the table below.
+
+           One per person per release, so a single diligent person testing three
+           releases contributes three.{% endcomment %}
+        {% if community_total %}
+          <div class="small text-secondary mt-1">
+            {{ community_total }} community confirmation{{ community_total|pluralize }}
+          </div>
+        {% endif %}
+        {% if listing.vendor_spec_url %}
+          <div class="mt-3">
+            <a href="{{ listing.vendor_spec_url }}" class="btn btn-outline-primary btn-sm" rel="noopener noreferrer" target="_blank">
+              <i class="ti ti-external-link me-1"></i>Vendor spec sheet
+            </a>
+          </div>
+        {% endif %}
+        {% if user_can_edit %}
+          <div class="mt-2">
+            <a href="{% url 'hardware:propose_edit' listing.slug %}" class="btn btn-outline-secondary btn-sm">
+              <i class="ti ti-edit me-1"></i>Propose edit
+            </a>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h2 class="h4">Overview</h2>
+        {% if listing.description %}
+          <p class="mb-0">{{ listing.description|linebreaksbr }}</p>
+        {% else %}
+          <p class="text-secondary fst-italic mb-0">No description provided.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if compatibility %}
+      {% include "catalog/_compatibility_card.html" with rows=compatibility row_template="hardware/_compatibility_row.html" columns=compatibility_columns empty_message="No AlmaLinux releases recorded yet." note=compatibility_note only %}
+      {% if has_declared_versions %}
+        <p class="text-secondary small mt-n2 mb-3">
+          Releases marked <em>declared</em> have not been proven by a validation run
+          on this hardware; the rest have.
+        </p>
+      {% endif %}
+    {% endif %}
+
+    {% if cpu_support %}
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">CPU families</h3>
+      </div>
+      {% if has_declared_cpus %}
+        <div class="card-body pb-0">
+          <p class="text-secondary small mb-0">
+            Many systems accept more than one generation. Families marked
+            <em>vendor states support</em> come from the vendor's
+            specifications and carry no certification of their own until a run
+            proves them.
+          </p>
+        </div>
+      {% endif %}
+      <ul class="list-group list-group-flush">
+        {% for entry in cpu_support %}
+          <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+            <a href="{% url 'hardware:detail' entry.cpu.slug %}">{{ entry.cpu.vendor.name }} - {{ entry.cpu.name }}</a>
+            {% if entry.validated %}
+              <span class="badge badge-validation badge-{{ entry.cpu.validation_level }}">{{ entry.cpu.get_validation_level_display }}</span>
+            {% else %}
+              <span class="badge bg-secondary-lt text-secondary">Vendor states support</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if used_in %}
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Used in systems</h3>
+        <span class="card-subtitle text-secondary">{{ used_in_total }}</span>
+      </div>
+      <div class="card-body pb-0">
+        <p class="text-secondary small mb-0">
+          Systems this part is recorded in. Certification applies to CPU
+          families, so a model also shows the systems certified for its family.
+        </p>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for entry in used_in %}
+          <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+            <a href="{% url 'hardware:detail' entry.system.slug %}">{{ entry.system.vendor.name }} - {{ entry.system.name }}</a>
+            {% if entry.relation == 'validated' %}
+              <span class="badge badge-validation badge-{{ entry.system.validation_level }}">{{ entry.system.get_validation_level_display }}</span>
+            {% elif entry.relation == 'supported' %}
+              <span class="badge bg-secondary-lt text-secondary">Vendor states support</span>
+            {% else %}
+              <span class="badge bg-secondary-lt text-secondary">Present in system</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if used_in_hidden %}
+        <div class="card-footer text-secondary small">
+          and {{ used_in_hidden }} more.
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if family_models %}
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Models in this family</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-secondary small">
+          Certification applies to the family, so a passing run on any of these
+          models counts here. Benchmark results stay per model.
+        </p>
+        <div class="d-flex flex-wrap gap-2">
+          {% for m in family_models %}
+            <a class="badge bg-secondary-lt text-decoration-none"
+               href="{% url 'hardware:detail' m.slug %}">{{ m.name }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if parent_family %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <h3 class="h6 text-uppercase text-secondary">Part of</h3>
+        <a href="{% url 'hardware:detail' parent_family.slug %}">{{ parent_family.name }}</a>
+        <p class="text-secondary small mb-0 mt-1">
+          Certification for this model is granted at the family level.
+        </p>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if listing.category_values.all %}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Certification details</h3></div>
+      <div class="table-responsive">
+        <table class="table card-table">
+          <tbody>
+            {% regroup listing.category_values.all by value.category as grouped %}
+            {% for group in grouped %}
+              <tr>
+                <th scope="row" class="col-3">{{ group.grouper.name }}</th>
+                <td>
+                  {% for lcv in group.list %}
+                    <span class="badge bg-secondary-lt me-1">{{ lcv.value.value }}</span>
+                  {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if cert_total %}
+    <div class="card mb-3" id="certification-results">
+      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h3 class="card-title mb-0">
+          Certification results
+          <span class="text-secondary fw-normal">({{ cert_total }})</span>
+        </h3>
+        {% comment %}Filtered on the server, so each chip is an ordinary link:
+           bookmarkable, reload-safe, and working with scripting off. Only releases
+           that have runs are offered - a filter returning nothing reads as "no such
+           evidence" when it means "nobody ran that release".{% endcomment %}
+        {% if cert_alma_options|length > 1 %}
+          {% comment %}Labelled in visible text, not only in aria-label: a row of
+             bare numbers does not say what it is a row of.{% endcomment %}
+          <div class="d-flex align-items-center gap-2">
+            <span class="text-secondary small text-nowrap">AlmaLinux release</span>
+            <div class="btn-group btn-group-sm" role="group"
+                 aria-label="Filter certification results by AlmaLinux release">
+              <a class="btn {% if not cert_alma_selected %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+                 href="?#certification-results">All</a>
+              {% for major in cert_alma_options %}
+                <a class="btn {% if cert_alma_selected == major %}btn-primary active{% else %}btn-outline-secondary{% endif %}"
+                   href="?cert_alma={{ major }}#certification-results">{{ major }}</a>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+      </div>
+      <div class="table-responsive">
+        <table class="table card-table">
+          <thead><tr><th>Date</th><th>AlmaLinux</th><th>Verdict</th><th>Validated by</th><th>Tests</th><th></th></tr></thead>
+          <tbody>
+            {% for run in cert_page %}
+              <tr>
+                <td class="text-secondary small">{{ run.published_at|date:"Y-m-d" }}</td>
+                <td>{% if run.alma_release %}{{ run.alma_release.major }}{% if run.alma_minor is not None %}.{{ run.alma_minor }}{% endif %}{% endif %}</td>
+                <td>{% if run.verdict %}<span class="badge bg-success">PASS</span>{% else %}<span class="badge bg-danger">FAIL</span>{% endif %}</td>
+                <td>
+                  {% comment %}This inline conditional was the short labels' third
+                     hand-written copy. Now the shared mapping.{% endcomment %}
+                  <span class="badge badge-validation badge-{{ run.trust_level }}">
+                    {{ run.trust_level|level_short }}
+                  </span>
+                  <span class="text-secondary small">{{ run.submitter.username }}</span>
+                </td>
+                {% comment %}``tallied_statuses``, not ``status_counts`` - the
+                   property runs its own query, which was one per row. The view
+                   tallies the whole page in a single grouped query.{% endcomment %}
+                <td class="small text-secondary">
+                  {% for status, n in run.tallied_statuses.items %}{{ n }} {{ status }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                </td>
+                <td class="text-end"><a href="{{ run.get_absolute_url }}" class="small">details</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if cert_page.has_other_pages %}
+        {% comment %}Every link carries the active release filter, or page two of a
+           filtered view would quietly show everything. The fragment keeps the
+           reader at the table rather than throwing them back to the top of the
+           page.{% endcomment %}
+        <div class="card-footer d-flex justify-content-between align-items-center">
+          <span class="text-secondary small">
+            Page {{ cert_page.number }} of {{ cert_page.paginator.num_pages }}
+          </span>
+          <div class="btn-group btn-group-sm">
+            {% if cert_page.has_previous %}
+              <a class="btn btn-outline-secondary"
+                 href="?{% if cert_alma_selected %}cert_alma={{ cert_alma_selected }}&amp;{% endif %}cert_page={{ cert_page.previous_page_number }}#certification-results">Previous</a>
+            {% endif %}
+            {% if cert_page.has_next %}
+              <a class="btn btn-outline-secondary"
+                 href="?{% if cert_alma_selected %}cert_alma={{ cert_alma_selected }}&amp;{% endif %}cert_page={{ cert_page.next_page_number }}#certification-results">Next</a>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <aside class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h3 class="h6 text-uppercase text-secondary">Vendor</h3>
+        {% include "catalog/_vendor_card.html" with vendor=listing.vendor vendor_claimable=vendor_claimable only %}
+      </div>
+    </div>
+  </aside>
+</div>
+
+{% endblock %}

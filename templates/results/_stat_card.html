@@ -1,0 +1,15 @@
+<div class="col-md-6 col-lg-4">
+  <div class="card h-100"><div class="card-body">
+    <h2 class="h6">{{ title }}</h2>
+    <ul class="list-unstyled mb-0">
+      {% for row in rows %}
+        <li class="d-flex justify-content-between">
+          <span class="text-truncate" style="max-width: 15rem;">{{ row.label }}</span>
+          <span class="text-secondary">{{ row.count }}</span>
+        </li>
+      {% empty %}
+        <li class="text-secondary">No data.</li>
+      {% endfor %}
+    </ul>
+  </div></div>
+</div>

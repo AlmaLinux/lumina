@@ -1,0 +1,40 @@
+{% extends "base_public.html" %}
+{% block title %}Hardware statistics - AlmaLinux{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">Hardware statistics</h1>
+  <p class="text-secondary mb-0">Aggregated from {{ stats.total_runs }} published run{{ stats.total_runs|pluralize }}
+    across {{ stats.total_systems }} distinct system{{ stats.total_systems|pluralize }}.</p>
+</div>
+
+<div class="row g-3 mt-1">
+  {% include "results/_stat_card.html" with title="Top CPU models" rows=stats.cpu_models %}
+  {% include "results/_stat_card.html" with title="CPU vendors" rows=stats.cpu_vendors %}
+  {% include "results/_stat_card.html" with title="System vendors" rows=stats.system_vendors %}
+  {% include "results/_stat_card.html" with title="Motherboards" rows=stats.motherboards %}
+  {% include "results/_stat_card.html" with title="GPU models" rows=stats.gpu_models %}
+  {% include "results/_stat_card.html" with title="GPU drivers" rows=stats.gpu_drivers %}
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100"><div class="card-body">
+      <h2 class="h6">Memory sizes</h2>
+      <ul class="list-unstyled mb-0">
+        {% for b in stats.memory_buckets %}
+          <li class="d-flex justify-content-between"><span>{{ b.bucket }}</span><span class="text-secondary">{{ b.count }}</span></li>
+        {% empty %}<li class="text-secondary">No data.</li>{% endfor %}
+      </ul>
+    </div></div>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100"><div class="card-body">
+      <h2 class="h6">AlmaLinux releases</h2>
+      <ul class="list-unstyled mb-0">
+        {% for r in stats.releases %}
+          <li class="d-flex justify-content-between"><span>AlmaLinux {{ r.alma_release__major }}</span><span class="text-secondary">{{ r.count }}</span></li>
+        {% empty %}<li class="text-secondary">No data.</li>{% endfor %}
+      </ul>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

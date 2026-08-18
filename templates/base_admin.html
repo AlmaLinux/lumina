@@ -1,0 +1,131 @@
+{% load static lumina_filters %}{% comment %}
+Management UI: vanilla Bootstrap 5 + a flex-sidebar layout. We initially
+tried AdminLTE 3 here for visual parity with astra/accounts, but AdminLTE
+3 is built on Bootstrap 4.6 and clashed with the Bootstrap 5 markup the
+rest of the project uses. Sticking with one Bootstrap version sitewide
+keeps the markup consistent and avoids the conflicts.
+{% endcomment %}<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}AlmaLinux Hardware Catalog - Admin{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/almalinux-icon.svg' %}">
+    {# Montserrat is the AlmaLinux brand typeface (almalinux.org/branding) #}
+    {% comment %}All same-origin, vendored under static/vendor: no CDN, no font host. See
+       base_public.html for why, and the CSP that depends on it.{% endcomment %}
+    <link rel="stylesheet" href="{% static 'vendor/montserrat/montserrat.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/bootstrap-icons/bootstrap-icons.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/lumina-levels.css' %}">
+    <link rel="stylesheet" href="{% static 'css/lumina-admin.css' %}">
+    <link rel="stylesheet" href="{% static 'css/combobox.css' %}">
+    {% comment %}Shared with the other base layout: the partials both render depend on it.{% endcomment %}
+    <link rel="stylesheet" href="{% static 'css/lumina-shared.css' %}">
+    <script src="{% static 'vendor/htmx/htmx.min.js' %}" defer></script>
+  </head>
+  <body class="lumina-admin">
+    <div class="lumina-admin-shell">
+      <aside class="lumina-sidebar">
+        <a href="{% url 'core:home' %}" class="lumina-sidebar-brand">
+          {# Brand rule: white logo on dark backgrounds #}
+          <img src="{% static 'img/almalinux-logo-white.svg' %}" alt="AlmaLinux" height="24">
+          <span class="ms-1 text-secondary small">Lumina</span>
+        </a>
+        <nav class="nav flex-column">
+          <div class="lumina-sidebar-section">Workspace</div>
+          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'accounts:dashboard' %}">
+            <i class="bi bi-speedometer2 me-2"></i>Dashboard
+          </a>
+          <a class="nav-link {% if request.resolver_match.namespace == 'submit' %}active{% endif %}" href="{% url 'submit:start' %}">
+            <i class="bi bi-plus-circle me-2"></i>Submit hardware
+          </a>
+          {% comment %}Two entry points because the two catalogs ask for different
+             things: hardware wants a board and CPUs, software wants
+             AlmaLinux majors. One combined form would be mostly hidden fields.
+             Note bi-* icons here, not the ti-* used on public pages.{% endcomment %}
+          <a class="nav-link {% if request.resolver_match.url_name == 'submit' and request.resolver_match.namespace == 'software' %}active{% endif %}" href="{% url 'software:submit' %}">
+            <i class="bi bi-box me-2"></i>Submit software
+          </a>
+
+          {% if request.user|is_reviewer %}
+            <div class="lumina-sidebar-section">Review</div>
+            <a class="nav-link {% if request.resolver_match.view_name == 'review:queue' %}active{% endif %}" href="{% url 'review:queue' %}">
+              <i class="bi bi-inbox me-2"></i>Review queue
+            </a>
+            {% comment %}Decided work and the activity log. Linked for reviewers rather
+               than only staff: the same records live in /admin/audit/, which is exactly
+               where a reviewer cannot go.{% endcomment %}
+            <a class="nav-link {% if request.resolver_match.view_name == 'review:archive' %}active{% endif %}" href="{% url 'review:archive' %}">
+              <i class="bi bi-archive me-2"></i>Review archive
+            </a>
+          {% endif %}
+
+          {% if request.user.is_staff %}
+            <div class="lumina-sidebar-section">Admin</div>
+            <a class="nav-link" href="/admin/"><i class="bi bi-gear me-2"></i>Django admin</a>
+          {% endif %}
+
+          <div class="lumina-sidebar-section">Public</div>
+          <a class="nav-link" href="{% url 'core:home' %}"><i class="bi bi-globe me-2"></i>Public catalog</a>
+        </nav>
+      </aside>
+
+      <div class="lumina-content">
+        <header class="lumina-topbar">
+          <button class="btn btn-sm btn-link text-white d-md-none" type="button" id="sidebar-toggle" aria-label="Toggle sidebar">
+            <i class="bi bi-list fs-4"></i>
+          </button>
+          <div class="ms-auto">
+            {% if request.user.is_authenticated %}
+              <span class="text-white-50 me-2"><i class="bi bi-person-circle me-1"></i>{{ request.user.username }}</span>
+              <form method="post" action="{% url 'oidc_logout' %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-sm btn-outline-light" type="submit">Sign out</button>
+              </form>
+            {% else %}
+              <a class="btn btn-sm btn-light" href="{% url 'oidc_authentication_init' %}">Sign in</a>
+            {% endif %}
+          </div>
+        </header>
+
+        <main class="lumina-main">
+          {% if messages %}
+            {% for message in messages %}
+              <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+
+          {% block page_header %}
+            {% if block.super %}{% endif %}
+            <div class="lumina-page-header mb-4">
+              <h1 class="h2 mb-1">{% block page_title %}{% endblock %}</h1>
+              {% block page_subtitle %}{% endblock %}
+            </div>
+          {% endblock %}
+
+          {% block content %}{% endblock %}
+        </main>
+
+        <footer class="lumina-footer-admin small text-secondary">
+          &copy; AlmaLinux OS Foundation - Hardware certification catalog
+        </footer>
+      </div>
+    </div>
+
+    <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}" defer></script>
+    <script src="{% static 'js/combobox.js' %}" defer></script>
+    <script src="{% static 'js/submit-on-change.js' %}" defer></script>
+    <script nonce="{{ request.csp_nonce }}">
+      document.addEventListener("DOMContentLoaded", () => {
+        const toggle = document.getElementById("sidebar-toggle");
+        if (toggle) {
+          toggle.addEventListener("click", () => document.body.classList.toggle("sidebar-open"));
+        }
+      });
+    </script>
+  </body>
+</html>

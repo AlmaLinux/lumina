@@ -1,0 +1,240 @@
+name: CI
+
+on:
+  push:
+    # ``dev`` as well as ``main``: the dev environment deploys from a successful CI run on dev, and
+    # workflow_run has nothing to trigger on if CI never ran there.
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  # AlmaLinux, matching what this project certifies, and with Chromium from EPEL so the browser
+  # tests run here rather than in a job of their own. They guard the failures this project keeps
+  # shipping, so they belong on the same gate as everything else.
+  test:
+    # AlmaLinux's RunsOn fleet when this repository is in the org, GitHub's runners otherwise. The
+    # conditional is the important half: RunsOn labels only resolve for the account that owns the
+    # stack, so a fork or a personal repository would sit forever waiting for a runner that is never
+    # coming. Copied from almalinux/cloud-images, which does the same thing for the same reason.
+    #
+    # c8a is AMD Turin, and the gain here is per-core speed rather than core count: nothing in this
+    # suite runs in parallel today, so 4 vCPUs is 4 vCPUs. Note that c8a.xlarge has 8 GiB against the
+    # 16 GiB of a GitHub runner, so if a job starts dying on memory, .2xlarge is the one-word change.
+    runs-on: >-
+      ${{
+        github.repository_owner == 'AlmaLinux' &&
+          format('runs-on={0}/family=c8a.xlarge+c7a.xlarge/image=ubuntu24-full-x64/spot=false', github.run_id)
+        ||
+        'ubuntu-latest'
+      }}
+    # This is the job to watch on memory: Chromium plus a 2 GiB shm inside an AlmaLinux container,
+    # on a runner with half the RAM a GitHub one has.
+    container:
+      image: almalinux:10
+      # Chromium's sandbox wants user namespaces a container does not grant by default, and it
+      # needs more than the default 64MB of shared memory to render a page of any size.
+      options: --shm-size=2g
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: System packages
+        run: |
+          dnf -y install epel-release
+          dnf -y install python3 python3-pip python3-devel gcc \
+                         mariadb-connector-c-devel pkgconf-pkg-config \
+                         chromium
+          chromium-browser --version
+
+      - name: Install
+        run: python3 -m pip install -e '.[dev,browser]'
+
+      - name: Django check
+        run: python3 manage.py check
+
+      - name: Pytest
+        env:
+          # Explicit, so a missing package fails with a package name rather than somewhere deeper
+          # with a Playwright one. Without it the tests would *skip*, which is the right behavior
+          # on a laptop and the wrong one on the gate.
+          LUMINA_BROWSER_EXECUTABLE: /usr/bin/chromium-browser
+          LUMINA_BROWSER_ARTIFACTS: ${{ github.workspace }}/browser-artifacts
+        run: python3 -m pytest -ra
+
+      - name: Screenshots of anything that failed
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-failures
+          path: browser-artifacts/
+          if-no-files-found: ignore
+
+      - name: Ruff
+        run: python3 -m ruff check lumina tests
+
+  # The deploy path is code too, and it is the one piece nothing else exercises: a broken playbook or
+  # workflow is only discovered at the moment somebody needs a deploy to work. Cheap enough to run on
+  # every pull request.
+  lint-deploy:
+    # AlmaLinux's RunsOn fleet when this repository is in the org, GitHub's runners otherwise. The
+    # conditional is the important half: RunsOn labels only resolve for the account that owns the
+    # stack, so a fork or a personal repository would sit forever waiting for a runner that is never
+    # coming. Copied from almalinux/cloud-images, which does the same thing for the same reason.
+    #
+    # c8a is AMD Turin, and the gain here is per-core speed rather than core count: nothing in this
+    # suite runs in parallel today, so 4 vCPUs is 4 vCPUs. Note that c8a.xlarge has 8 GiB against the
+    # 16 GiB of a GitHub runner, so if a job starts dying on memory, .2xlarge is the one-word change.
+    runs-on: >-
+      ${{
+        github.repository_owner == 'AlmaLinux' &&
+          format('runs-on={0}/family=c8a.xlarge+c7a.xlarge/image=ubuntu24-full-x64/spot=false', github.run_id)
+        ||
+        'ubuntu-latest'
+      }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install 'ansible-core>=2.16' ansible-lint
+          # Into the project-local path ansible.cfg points at, so this lints against the pinned
+          # versions and matches what a laptop run sees. Resolving from the system path instead is how
+          # a local run passed while this job failed on a collection that had changed namespace.
+          ansible-galaxy collection install -r ansible/requirements.yml -p ansible/collections
+
+      # Every workflow in this repository, including this one. Catches an expression that will not
+      # evaluate, a secret referenced by a name that does not exist, and a shell that will not parse.
+      - name: actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
+      - name: ansible-lint
+        working-directory: ansible
+        run: ansible-lint roles/lumina playbooks/
+
+      # Catches an undefined variable in a template or a task, which is how the timer units shipped
+      # referencing lumina_venv_dir when the variable is lumina_venv.
+      - name: Playbook syntax
+        working-directory: ansible
+        run: ansible-playbook --syntax-check -i inventory/dev.example.yml playbooks/dev.yml
+
+      # Neither of the above can see a rule that is well-formed and wrong, and the certificate rule is
+      # exactly that shape: the previous version skipped certbot whenever a file existed at the Let's
+      # Encrypt path, which lints clean and means a self-signed or staging certificate is never
+      # replaced. This builds a real certificate for each state a host can be in and checks what the
+      # role's own tasks decide about it.
+      - name: Certificate states
+        working-directory: ansible
+        run: python tests/certificate_states.py
+
+  # SQLite (above) is fast but hides MariaDB-specific behavior: JSONField
+  # querying, CheckConstraint enforcement, Decimal ordering. This job runs
+  # the same tests against the real engine.
+  test-mariadb:
+    # AlmaLinux's RunsOn fleet when this repository is in the org, GitHub's runners otherwise. The
+    # conditional is the important half: RunsOn labels only resolve for the account that owns the
+    # stack, so a fork or a personal repository would sit forever waiting for a runner that is never
+    # coming. Copied from almalinux/cloud-images, which does the same thing for the same reason.
+    #
+    # c8a is AMD Turin, and the gain here is per-core speed rather than core count: nothing in this
+    # suite runs in parallel today, so 4 vCPUs is 4 vCPUs. Note that c8a.xlarge has 8 GiB against the
+    # 16 GiB of a GitHub runner, so if a job starts dying on memory, .2xlarge is the one-word change.
+    runs-on: >-
+      ${{
+        github.repository_owner == 'AlmaLinux' &&
+          format('runs-on={0}/family=c8a.xlarge+c7a.xlarge/image=ubuntu24-full-x64/spot=false', github.run_id)
+        ||
+        'ubuntu-latest'
+      }}
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_DATABASE: lumina_test
+          MARIADB_USER: lumina
+          MARIADB_PASSWORD: lumina
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: System deps for mysqlclient
+        # mariadb-client for the grant below. Installed rather than assumed: whether a runner image
+        # ships a mysql client is not something this job should depend on.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmariadb-dev pkg-config build-essential mariadb-client
+
+      # Django's test runner creates its own database, ``test_$DB_NAME``, and the MariaDB image grants
+      # MARIADB_USER rights on MARIADB_DATABASE alone. So every test in this job errored in setup with
+      #
+      #     (1044, "Access denied for user 'lumina'@'%' to database 'test_lumina_test'")
+      #
+      # which reads as 2000 broken tests rather than one missing grant. devstack/mariadb-init.sql
+      # carries the same grant for the same reason; this is the CI half of it.
+      #
+      # The backticks and the escaped underscore matter: ``_`` is a single-character wildcard in a
+      # GRANT target, so ``test_lumina%`` unescaped would also hand over databases nobody meant to.
+      - name: Let the test user create its test database
+        # A quoted heredoc, so nothing here is expanded by the shell and shellcheck has nothing to
+        # object to about the backticks.
+        run: |
+          mariadb -h 127.0.0.1 -P 3306 -uroot -proot <<'SQL'
+          GRANT ALL PRIVILEGES ON `test\_lumina%`.* TO 'lumina'@'%';
+          FLUSH PRIVILEGES;
+          SHOW GRANTS FOR 'lumina'@'%';
+          SQL
+
+      - name: Install
+        run: pip install -e '.[dev]'
+
+      - name: Pytest against MariaDB
+        env:
+          DJANGO_SETTINGS_MODULE: lumina.settings.ci_mariadb
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_NAME: lumina_test
+          DB_USER: lumina
+          DB_PASSWORD: lumina
+        # ``not browser``: this job exists to answer a question about the database engine, and
+        # nothing the browser tests assert depends on it. Running them here would double the job
+        # for no coverage.
+        run: python -m pytest -ra -m 'not browser' --ds=lumina.settings.ci_mariadb
+
+  # Deploy dev, after the gate above and only from the dev branch.
+  #
+  # This lives here rather than in a workflow of its own with a ``workflow_run`` trigger, and the
+  # reason is a rule that is easy to lose an afternoon to: workflow_run fires only from the copy of the
+  # workflow on the repository's **default branch**. With the deploy in its own file on ``dev``, a push
+  # to dev ran CI and nothing else, forever, with no error anywhere to explain it. A job here runs from
+  # the branch's own workflow file, so it works the day it is pushed.
+  #
+  # The condition is what keeps the deploy secrets away from pull requests, including from forks: a
+  # fork PR is a ``pull_request`` event and never a push to this repository's dev branch, so this job
+  # does not run and its secrets are never available to it. Treat that line as load-bearing.
+  deploy-dev:
+    needs: [test, test-mariadb, lint-deploy]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/deploy-dev-run.yml
+    with:
+      # The commit the jobs above just tested, not the branch name: a merge landing while this runs
+      # would otherwise deploy something nothing has tested.
+      ref: ${{ github.sha }}
+      seed: false
+    secrets: inherit
