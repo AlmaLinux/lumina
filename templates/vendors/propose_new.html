@@ -1,0 +1,75 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Propose a new vendor{% endblock %}
+{% block page_subtitle %}<p class="text-secondary mb-0">Submit a vendor profile for AlmaLinux review. Approved vendors become selectable when submitting hardware.</p>{% endblock %}
+{% block content %}
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+
+  {% include "catalog/_form_errors.html" %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Vendor name</label>
+          {{ form.name }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.contact_email.id_for_label }}">Contact email</label>
+          {{ form.contact_email }}
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.homepage.id_for_label }}">Homepage</label>
+          {{ form.homepage }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.logo.id_for_label }}">Logo</label>
+          {{ form.logo }}
+          <div class="form-text">PNG, JPG, or SVG. Square works best.</div>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+          {{ form.description }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.scope.id_for_label }}">Makes</label>
+          {{ form.scope }}
+          <div class="form-text">Which submit pickers should list this vendor.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% comment %}Optional: claim ownership in the same submission. The checkbox is the reveal toggle
+     and the claim inputs sit in a following .reveal-fields sibling, folded away until it is ticked
+     (static/css/lumina-shared.css). Ticked, the view opens a VendorClaim instead of a plain
+     proposal; the fields are the reused VendorClaimForm, so a reviewer sees exactly what any claim
+     gives them.{% endcomment %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="form-check">
+        {{ form.claim_ownership }}
+        <label class="form-check-label" for="{{ form.claim_ownership.id_for_label }}">{{ form.claim_ownership.label }}</label>
+        {% if form.claim_ownership.help_text %}<div class="form-text">{{ form.claim_ownership.help_text }}</div>{% endif %}
+        <div class="reveal-fields mt-3">
+          {% for field in claim_form %}
+            <div class="mb-3">
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-send me-1"></i>Submit for review</button>
+    <a class="btn btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
+  </div>
+</form>
+
+{% endblock %}

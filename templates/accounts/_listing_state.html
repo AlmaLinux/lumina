@@ -1,0 +1,61 @@
+{% comment %}Status and action cells for one hardware listing on the dashboard. Expects `listing`.
+
+Two <td>s, shared by the systems and components tables because both showed the same
+thing and only one of them had an actions column.
+
+What this fixes: the cell used to read published/unpublished off the *listing*, so a
+submission a reviewer had sent back rendered as "unpublished" - indistinguishable from
+one still waiting in the queue. The reviewer's note was in the database and on no page
+a submitter could reach, and there was no way to act on it. `listing.latest_submission`
+is set in `accounts.views.dashboard`.
+{% endcomment %}
+<td>
+  {% if listing.latest_submission %}
+    <span class="status-pill status-{{ listing.latest_submission.status }}">
+      {{ listing.latest_submission.get_status_display }}
+    </span>
+    {% if listing.latest_submission.status == "needs-changes" and listing.latest_submission.reviewer_notes %}
+      {% comment %}Shown only while it is still needs-changes: once resubmitted the
+         note is kept on the row for the reviewer, and repeating it here would read as
+         a live complaint against something already back in the queue.{% endcomment %}
+      <div class="text-secondary small">{{ listing.latest_submission.reviewer_notes }}</div>
+    {% endif %}
+  {% elif listing.published %}
+    <span class="text-success">published</span>
+  {% else %}
+    {% comment %}"unpublished" on its own was a dead end: it named the state and said
+       nothing about why or what to do, and for a seeded CPU or GPU family that a run
+       was merely classified against there is nothing the reader can do at all. See
+       ``hardware.services.publication_state``.{% endcomment %}
+    {% if listing.publication.kind == "blocked" %}
+      <span class="text-warning">
+        <i class="bi bi-exclamation-triangle me-1"></i>not published
+      </span>
+    {% elif listing.publication.kind == "reference" %}
+      <span class="text-secondary">catalog entry</span>
+    {% else %}
+      <span class="text-secondary">unpublished</span>
+    {% endif %}
+    {% if listing.publication %}
+      {% if listing.publication.shared and listing.publication.kind != "reference" %}
+        {% comment %}Answers "why is this even on my page": a seeded CPU or GPU family
+           the reader never created, listed because a run of theirs was classified
+           against it.{% endcomment %}
+        <div class="text-secondary small">
+          Shared catalog entry, not a listing of yours.
+        </div>
+      {% endif %}
+      <div class="text-secondary small">{{ listing.publication.reason }}</div>
+      <div class="small">{{ listing.publication.next_step }}</div>
+    {% endif %}
+  {% endif %}
+</td>
+<td class="text-end">
+  {% if listing.latest_submission.status == "needs-changes" %}
+    <a class="btn btn-sm btn-primary"
+       href="{% url 'submit:revise' listing.latest_submission.uuid %}">Revise</a>
+  {% elif listing.user_can_edit and listing.published %}
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{% url 'hardware:propose_edit' listing.slug %}">Propose changes</a>
+  {% endif %}
+</td>

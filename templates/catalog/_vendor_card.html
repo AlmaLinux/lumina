@@ -1,0 +1,40 @@
+{% comment %}The vendor block in a listing's sidebar. Expects `vendor` and
+`vendor_claimable`.
+
+The two catalogs' copies were byte-identical once the object name is normalized -
+the logo style, the homepage link, the "Verified vendor" line, and the whole claim
+block. Only the surrounding card chrome differs, and legitimately: hardware wraps it
+in `card mb-3` with an `<h3 class="h6 text-uppercase">` to match its neighbouring
+sidebar cards, software uses `<h2>`, and the two label it differently ("Vendor" vs
+"Publisher"). So the chrome stays with each caller and only the body is shared.
+
+Both callers already derive `vendor_claimable` from the same helper
+(`vendors.services.is_claimable`), whose own docstring says it is shared "so the rule
+cannot drift between them" - this makes the markup match the rule.
+
+The claim call to action shows only while nobody has been recognised as representing
+this vendor. lumina has no public vendor pages, so a listing somebody else created on
+their behalf is the only place the real vendor can find their way in.
+{% endcomment %}
+{% if vendor.logo %}
+  <img src="{{ vendor.logo.url }}" alt="{{ vendor.name }} logo"
+       class="mb-2" style="max-height: 64px; max-width: 100%;">
+{% endif %}
+<p class="mb-1 fw-semibold">{{ vendor.name }}</p>
+{% if vendor.homepage %}
+  <a href="{{ vendor.homepage }}" class="small">{{ vendor.homepage }}</a>
+{% endif %}
+{% if vendor.verified %}
+  <div class="small text-success mt-2"><i class="ti ti-check me-1"></i>Verified vendor</div>
+{% endif %}
+{% if vendor_claimable %}
+  <div class="mt-3 pt-3 border-top">
+    <p class="small text-secondary mb-2">
+      Nobody from {{ vendor.name }} maintains this entry yet.
+    </p>
+    <a class="btn btn-outline-primary btn-sm"
+       href="{% url 'vendors:claim' vendor.slug %}">
+      <i class="ti ti-shield-check me-1"></i>Are you the vendor?
+    </a>
+  </div>
+{% endif %}

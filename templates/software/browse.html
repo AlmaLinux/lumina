@@ -1,0 +1,43 @@
+{% extends "base_public.html" %}
+{% block title %}Certified software - AlmaLinux{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'core:home' %}">Catalog</a></li>
+  <li class="breadcrumb-item active">Software</li>
+</ol>
+
+<div class="page-header">
+  <div class="row align-items-end">
+    <div class="col">
+      <h1 class="page-title">Certified software</h1>
+      <p class="text-secondary mb-0">
+        Software validated on AlmaLinux, per release. Each entry shows which
+        AlmaLinux majors it is certified for and who validated each one.
+      </p>
+    </div>
+    <div class="col-auto">
+      <form hx-get="{{ request.path }}" hx-target="#results" hx-push-url="true"
+            hx-trigger="submit, input changed delay:400ms from:#software-search">
+        {% include "catalog/_carried_filters.html" %}
+        <div class="input-icon">
+          <span class="input-icon-addon"><i class="ti ti-search"></i></span>
+          <input id="software-search" class="form-control" name="q" type="search"
+                 placeholder="Search software"
+                 value="{{ active_filters.q.0|default:'' }}">
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="row mt-3 g-3">
+  <aside class="col-lg-3">
+    <div class="filter-panel">{% include "catalog/_filter_panel.html" %}</div>
+  </aside>
+  <section class="col-lg-9">
+    <div id="results">{% include "software/_results.html" %}</div>
+  </section>
+</div>
+
+{% endblock %}

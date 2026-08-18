@@ -1,0 +1,76 @@
+{% comment %}
+One form field, with markup matching its widget.
+
+Django's default multi-checkbox markup is a <ul> of <li><label><input>, which
+combined with Bootstrap's .form-check-input (that expects a .form-check
+wrapper) makes labels overlap each other. Each choice therefore gets its own
+.form-check row here.
+
+Dispatch is on the widget's own attributes, so no template filter is needed:
+CheckboxSelectMultiple is input_type "checkbox" with allow_multiple_selected,
+CheckboxInput is "checkbox" without it, and RadioSelect is "radio".
+{% endcomment %}
+{% with widget=field.field.widget %}
+  {% if widget.input_type == "checkbox" and widget.allow_multiple_selected %}
+    <div class="mb-3">
+      <div class="form-label">{{ field.label }}</div>
+      <div class="row row-cols-2 row-cols-md-3 g-1">
+        {% for choice in field %}
+          <div class="col">
+            <div class="form-check mb-0">
+              {{ choice.tag }}
+              <label class="form-check-label" for="{{ choice.id_for_label }}">
+                {{ choice.choice_label }}
+              </label>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      {% if field.help_text %}
+        <div class="form-text">{{ field.help_text }}</div>
+      {% endif %}
+      {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    </div>
+  {% elif widget.input_type == "radio" %}
+    <div class="mb-3">
+      <div class="form-label">{{ field.label }}</div>
+      {% for choice in field %}
+        <div class="form-check">
+          {{ choice.tag }}
+          <label class="form-check-label" for="{{ choice.id_for_label }}">
+            {{ choice.choice_label }}
+          </label>
+        </div>
+      {% endfor %}
+      {% if field.help_text %}
+        <div class="form-text">{{ field.help_text }}</div>
+      {% endif %}
+      {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    </div>
+  {% elif widget.input_type == "checkbox" %}
+    <div class="mb-3">
+      <div class="form-check">
+        {{ field }}
+        <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      </div>
+      {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+      {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    </div>
+  {% else %}
+    <div class="mb-3">
+      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% comment %}Home for the live "matches an existing catalog entry" / "new" badge,
+         filled in by submission-summary.js. Rendered here rather than created by the
+         script on purpose: ``combobox.js`` moves the input into a ``.combobox-wrap`` div
+         of its own after the page loads, so a badge appended to the input's parent ended
+         up orphaned in the old container while a second one was created in the new one -
+         a stale "matches" line sitting above a live "new" one. Owning the element in the
+         template means there is exactly one and its position never depends on which
+         script ran first.{% endcomment %}
+      <span class="small" data-match-badge="{{ field.name }}"></span>
+      {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+      {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}

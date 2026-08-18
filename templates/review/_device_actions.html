@@ -1,0 +1,34 @@
+{% comment %}The two things a reviewer can say about a part, wherever they are looking at one.
+
+   Both are global rules keyed on the PCI ids, not on the run or submission in front of them -
+   where somebody happened to notice a part is not part of the rule. So this include is the same
+   on a validate run, a benchmark run, and a survey submission, which is the point: the collected
+   data underneath all three is identical, and a reviewer who can act on one should be able to act
+   on the others.
+
+   Takes: action (the blacklist form's URL), vendor_id, device_id, kind, and source - the query
+   fragment naming the run or submission this device was read from, so the rule builder can
+   prefill from it. Renders nothing at all for a device with no PCI id, because neither rule can
+   be written without one.
+{% endcomment %}
+{% if vendor_id and device_id %}
+  <div class="d-flex gap-2 align-items-center">
+    <form method="post" action="{{ action }}" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="vendor_id" value="{{ vendor_id }}">
+      <input type="hidden" name="device_id" value="{{ device_id }}">
+      <input type="hidden" name="kind" value="{{ kind }}">
+      <button class="btn btn-sm btn-outline-secondary py-0" type="submit"
+              title="Never catalogue or count this part. Global, and undoable.">
+        Blacklist
+      </button>
+    </form>
+    <a class="btn btn-sm btn-outline-secondary py-0"
+       title="Write a rule for what this part should be called."
+       href="{% url 'review:naming_rule_new' %}?kind={{ kind }}&amp;vendor_id={{ vendor_id }}&amp;device_id={{ device_id }}{% if source %}&amp;{{ source }}{% endif %}">
+      Name it
+    </a>
+  </div>
+{% else %}
+  <span class="text-secondary small">no PCI id</span>
+{% endif %}

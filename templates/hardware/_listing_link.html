@@ -1,0 +1,20 @@
+{% comment %}A hardware listing's name, linked only when the link resolves.
+
+`hardware:detail` filters on `published`, so pointing at a draft is a 404 - which
+is what the dashboard used to do to an owner looking at their own work. A draft is
+still named, because the owner needs to see it exists; it just stops pretending to
+be a page.
+
+One partial rather than three copies of the conditional: the dashboard names
+listings in three places, and a fourth would otherwise get it wrong again.
+
+Params (pass `only`, so nothing leaks in from the caller):
+  listing      - a System or Component
+  with_vendor  - prefix the vendor name, as the listing tables do
+{% endcomment %}
+{% if listing.published %}
+  <a href="{% url 'hardware:detail' listing.slug %}">{% if with_vendor %}{{ listing.vendor.name }} {% endif %}{{ listing.name }}</a>
+{% else %}
+  {% if with_vendor %}{{ listing.vendor.name }} {% endif %}{{ listing.name }}
+  <span class="badge text-bg-secondary ms-1">draft</span>
+{% endif %}

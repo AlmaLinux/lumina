@@ -1,0 +1,49 @@
+{% load lumina_filters %}
+{% comment %}The reviewer's final-tier control. Expects `select_class`, optionally `levels`.
+
+Rendered from ``ValidationLevel.choices`` rather than spelled out, because both
+callers used to hardcode all three value/label pairs. Both views validate the posted
+value against the enum, so a fourth tier would have been accepted server-side and
+offerable by neither page - silently, with no error anywhere. Every other tier picker
+in the codebase already renders from the enum.
+
+`levels` narrows what is offered, and `select_class` is the Bootstrap sizing the two
+callers differ on.
+
+Hardware submissions pass a single tier. A manual submission is a *declaration*,
+capped at community by ``Submission.MANUAL_CEILING``, so offering a reviewer
+Vendor-validated was offering a choice the model will not honour. Software submissions
+pass nothing and keep all three, because there the submission *is* the evidence model:
+software has no bundle path, so a verified publisher's own submission is the only
+thing that can carry a vendor tier.
+
+Narrowed here as well as capped in the model deliberately. The cap is what makes the
+rule true; this is what stops a reviewer being shown a choice that is a lie.
+{% endcomment %}
+{% if levels %}
+  {% if levels|length == 1 %}
+    {% comment %}One option is not a choice. State it and post it hidden, rather than
+       draw a dropdown that cannot be dropped.{% endcomment %}
+    {% for value, label in levels %}
+      <input type="hidden" name="final_level" value="{{ value }}">
+      <span class="badge badge-validation badge-{{ value }}">{{ label }}</span>
+    {% endfor %}
+    <div class="form-hint mt-1">
+      A submission is a declaration, not a validation run, so it cannot certify above
+      this tier. Vendor and AlmaLinux certification come from an approved suite run.
+    </div>
+  {% else %}
+    <select class="{{ select_class|default:"form-select" }}" name="final_level">
+      {% for value, label in levels %}
+        <option value="{{ value }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+  {% endif %}
+{% else %}
+  <select class="{{ select_class|default:"form-select" }}" name="final_level">
+    {% validation_levels as all_levels %}
+    {% for value, label in all_levels %}
+      <option value="{{ value }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+{% endif %}

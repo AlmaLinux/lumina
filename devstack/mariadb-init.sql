@@ -1,0 +1,21 @@
+-- Applied by the MariaDB entrypoint on every start of the devstack db container.
+--
+-- Runs every time rather than once, because the datadir is a tmpfs (see compose.yaml):
+-- the database is wiped whenever the container restarts, so the image treats each start
+-- as a first initialization and replays /docker-entrypoint-initdb.d.
+--
+-- Why it exists: the MariaDB test job runs inside the web container as the ``lumina``
+-- user, and Django's test runner creates its own database named ``test_<DB_NAME>``. The
+-- image's MARIADB_USER only gets rights on ``lumina`` itself, so
+-- ``pytest --ds=lumina.settings.ci_mariadb`` died with
+--
+--     (1044, "Access denied for user 'lumina'@'%' to database 'test_lumina'")
+--
+-- That grant used to exist only because somebody had applied it by hand to a long-running
+-- container; the first `down -v` took it with them, along with the ability to run the
+-- MariaDB half of the suite on a fresh stack.
+--
+-- Backticks and the escaped underscore matter: `_` is a LIKE wildcard in a GRANT target,
+-- so `test_lumina%` unescaped would also match databases nobody meant to hand over.
+GRANT ALL PRIVILEGES ON `test\_lumina%`.* TO 'lumina'@'%';
+FLUSH PRIVILEGES;

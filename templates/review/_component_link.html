@@ -1,0 +1,13 @@
+{% comment %}A component, linked to its catalog page when it has one.
+
+   Components are only browsable once published, and the naming plan is full of parts that are
+   not: a template calling get_absolute_url on them rendered href="" and produced a link that
+   reloaded the page somebody was already on.
+
+   Takes: component.
+{% endcomment %}
+{% if component.published %}
+  <a href="{% url 'hardware:detail' component.slug %}">{{ component.name }}</a>
+{% else %}
+  {{ component.name }} <span class="text-secondary small">(unpublished)</span>
+{% endif %}

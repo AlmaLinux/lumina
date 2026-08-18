@@ -1,0 +1,18 @@
+# Copy to dev.yml for a run from a laptop (dev.yml is gitignored). CI writes its own from repository secrets rather than
+# committing a hostname, so this file is documentation and a starting point.
+---
+lumina_dev:
+  hosts:
+    lumina-dev:
+      ansible_host: dev.lumina.example.com
+      ansible_user: deploy
+  vars:
+    # The branch the dev environment tracks. CI passes this explicitly; set it here so a laptop run
+    # deploys the same thing rather than the role's default of main.
+    lumina_version: dev
+    # Reaches the vhost's server_name only; devstack settings allow any host.
+    lumina_dev_hostname: dev.lumina.example.com
+    # First deploy, or a deliberate reset. These are read with a default rather than
+    # defined in the play, so setting them here works; a play var would have outranked
+    # an inventory one and made this line do nothing.
+    # lumina_dev_seed: true

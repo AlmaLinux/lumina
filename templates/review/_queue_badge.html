@@ -1,0 +1,9 @@
+{% comment %}One queue's depth, coloured by whether it needs anybody.
+
+Red when there is something waiting, grey at zero: the point of the badge is to draw a
+reviewer to the tab that needs them, and a row of identical grey pills does not. Zero is
+still shown rather than hidden, so "nothing waiting" is a statement the page makes rather
+than something a reader has to infer from an absence.
+
+Caller passes ``count``.{% endcomment %}
+<span class="badge {% if count %}text-bg-danger{% else %}text-bg-secondary{% endif %} ms-1">{{ count }}</span>

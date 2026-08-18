@@ -1,0 +1,28 @@
+{% comment %}Per-test result table. Expects `results`.{% endcomment %}
+{% if results %}
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead><tr>
+      <th>Test</th><th>Category</th><th>Severity</th><th>Status</th><th>Detail</th>
+    </tr></thead>
+    <tbody>
+      {% for r in results %}
+        <tr>
+          <td><code>{{ r.test_id }}</code></td>
+          <td>{{ r.category }}</td>
+          <td>{% if r.severity %}<span class="text-secondary">{{ r.severity }}</span>{% endif %}</td>
+          <td>
+            {% if r.status == "pass" %}<span class="badge text-bg-success">pass</span>
+            {% elif r.status == "fail" %}<span class="badge text-bg-danger">fail</span>
+            {% elif r.status == "error" %}<span class="badge text-bg-warning">error</span>
+            {% else %}<span class="badge text-bg-secondary">skip</span>{% endif %}
+          </td>
+          <td class="text-secondary small">{{ r.reason|default:"" }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <p class="text-secondary">No validation tests in this run.</p>
+{% endif %}

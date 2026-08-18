@@ -1,0 +1,58 @@
+{% load lumina_filters %}
+{% comment %}One AlmaLinux major of one product: its tier, its community
+   confirmation count, and the one-click control.
+
+   Rendered standalone as the HTMX response to confirming or withdrawing, which is
+   why it carries its own id and its own hx-target - the count has to move in
+   place without reloading the page.{% endcomment %}
+<tr id="compat-{{ row.release.major }}">
+  <th scope="row" class="fw-normal">
+    AlmaLinux {{ row.release.major }}
+    {% if row.status == "pending" %}
+      <span class="badge bg-yellow-lt ms-1">Awaiting review</span>
+    {% endif %}
+  </th>
+  <td>
+    {% if row.status == "pending" %}
+      <span class="text-secondary small">
+        You reported this. It appears publicly once a reviewer accepts it.
+      </span>
+    {% else %}
+      {% comment %}Short labels, because the column header is already "Validated
+         by". ``get_level_display`` would restate it in every cell.{% endcomment %}
+      {% for certification in row.certifications.all %}
+        <span class="badge badge-validation badge-{{ certification.level }} me-1">
+          {{ certification.level|level_short }}
+        </span>
+      {% empty %}
+        <span class="badge badge-validation badge-community">Community</span>
+      {% endfor %}
+    {% endif %}
+  </td>
+  <td class="text-nowrap">
+    {% if row.confirmations %}
+      {{ row.confirmations }} confirmation{{ row.confirmations|pluralize }}
+    {% else %}
+      <span class="text-secondary">none yet</span>
+    {% endif %}
+  </td>
+  <td class="text-end">
+    {% if request.user.is_authenticated and row.status == "approved" %}
+      {% if row.release.major in confirmed_majors %}
+        <form method="post" hx-post="{% url 'software:withdraw' software.slug row.release.major %}"
+              hx-target="#compat-{{ row.release.major }}" hx-swap="outerHTML"
+              action="{% url 'software:withdraw' software.slug row.release.major %}">
+          {% csrf_token %}
+          <button class="btn btn-sm btn-outline-secondary">Withdraw</button>
+        </form>
+      {% else %}
+        <form method="post" hx-post="{% url 'software:attest' software.slug row.release.major %}"
+              hx-target="#compat-{{ row.release.major }}" hx-swap="outerHTML"
+              action="{% url 'software:attest' software.slug row.release.major %}">
+          {% csrf_token %}
+          <button class="btn btn-sm btn-outline-primary">Confirm it works</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </td>
+</tr>

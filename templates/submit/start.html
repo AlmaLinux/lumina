@@ -1,0 +1,324 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Submit hardware{% endblock %}
+{% block page_subtitle %}<p class="text-secondary mb-0">Provide hardware details and attach test results. Submissions are reviewed before appearing in the public catalog.</p>{% endblock %}
+{% block content %}
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+
+  {% include "catalog/_form_errors.html" %}
+
+  {% comment %}Empty here; ``submit/revise.html`` fills it with what the reviewer
+     asked for. Same arrangement as the software pages, so a field added to this form
+     cannot go missing from the revise page.{% endcomment %}
+  {% block submission_intro %}{% endblock %}
+
+  {% comment %}Only rendered once the duplicate check has something to say, so an
+     ordinary submission is never shown a box asking about a problem it does not
+     have. ``_warn_about_duplicates`` names the matches in the error itself.{% endcomment %}
+  {% if form.confirm_not_duplicate.errors %}
+    <div class="alert alert-warning" role="alert">
+      <h2 class="h5 alert-heading">
+        <i class="bi bi-exclamation-triangle me-1"></i>Is this already in the catalog?
+      </h2>
+      {% for error in form.confirm_not_duplicate.errors %}
+        <p>{{ error }}</p>
+      {% endfor %}
+      <div class="form-check mb-0">
+        {{ form.confirm_not_duplicate }}
+        <label class="form-check-label" for="{{ form.confirm_not_duplicate.id_for_label }}">
+          This is different hardware from the listings above
+        </label>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title h5 mb-0">What are you submitting?</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.kind.id_for_label }}">Kind</label>
+          {{ form.kind }}
+        </div>
+        {% comment %}A "Re-validate existing listing" slug box used to sit here. It let
+           anyone name any listing and rewrite its AlmaLinux compatibility before a
+           reviewer saw the submission; see the module docstring in
+           ``lumina/hardware/forms.py``. Re-validating means running the suite.
+        {% endcomment %}
+      </div>
+      <div class="alert alert-info mt-3 mb-0" role="note">
+        <h3 class="h6 mb-1">This records a declared listing</h3>
+        <p class="mb-0">
+          Use this to catalog hardware that cannot run the certification suite yet:
+          pre-release or embargoed parts, a machine you do not have shell access to, or
+          a vendor's own test evidence. A declared listing is labeled as unproven and
+          counts as a community confirmation once a reviewer accepts it.
+          <strong>Certification comes from running the suite</strong>, which is also how
+          a listing earns a vendor or AlmaLinux tier.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title h5 mb-0">Listing details</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Name</label>
+          {{ form.name }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.model_number.id_for_label }}">
+            Model number <span class="text-secondary fw-normal">(optional)</span>
+          </label>
+          {{ form.model_number }}
+          <div class="form-text">Leave blank for families (e.g. a CPU family spanning many SKUs).</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.vendor.id_for_label }}">Vendor</label>
+          {{ form.vendor }}
+          <div class="form-text">
+            Start typing to search. Not listed?
+            Choose <strong>+ Add a new vendor</strong> at the end of the list.
+          </div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.on_behalf_of.id_for_label }}">Submit on behalf of</label>
+          {{ form.on_behalf_of }}
+        </div>
+
+        {% comment %}
+          Inline new-vendor section: hidden by default, revealed by JS when
+          the vendor dropdown is set to "__new__".
+        {% endcomment %}
+        <div class="col-12" id="inline-vendor-section" hidden>
+          <fieldset class="border rounded p-3">
+            <legend class="h6 text-uppercase text-secondary fw-bold mb-3">New vendor (proposed)</legend>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.new_vendor_name.id_for_label }}">Vendor name</label>
+                {{ form.new_vendor_name }}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.new_vendor_homepage.id_for_label }}">Homepage</label>
+                {{ form.new_vendor_homepage }}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.new_vendor_contact_email.id_for_label }}">Contact email</label>
+                {{ form.new_vendor_contact_email }}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.new_vendor_logo.id_for_label }}">Logo (PNG/JPG)</label>
+                {{ form.new_vendor_logo }}
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="{{ form.new_vendor_description.id_for_label }}">Description</label>
+                {{ form.new_vendor_description }}
+              </div>
+            </div>
+            <div class="form-text mt-2">
+              The vendor will be created in draft state and published when this
+              submission is approved. You'll automatically be its owner.
+            </div>
+          </fieldset>
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.vendor_spec_url.id_for_label }}">Vendor spec URL</label>
+          {{ form.vendor_spec_url }}
+          <div class="form-text">Link to the vendor's spec sheet. Optional; shown as a button on the listing detail page.</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+          {{ form.description }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3" data-kind-only="system">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title h5 mb-0">CPU family</h2>
+        <p class="card-subtitle text-secondary small mb-0 mt-1">Select CPU components certified in this system. Don't see one? Add a new family inline below.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      {% if form.fields.cpus.choices %}
+        <label class="form-label" for="{{ form.cpus.id_for_label }}">Existing CPUs</label>
+        {{ form.cpus }}
+        <div class="form-text mb-3">Hold Ctrl/Cmd to select multiple.</div>
+      {% endif %}
+
+      <fieldset class="border rounded p-3">
+        <legend class="h6 text-uppercase text-secondary fw-bold mb-3">New CPU families (proposed)</legend>
+        <p class="text-secondary small mb-3">
+          Fill in any rows for CPU families not in the list above. Drafts are
+          published when this submission is approved.
+        </p>
+        {% for row in form.new_cpu_row_groups %}
+          <div class="row g-2 mb-2 align-items-end">
+            <div class="col-md-5">
+              <label class="form-label small text-secondary mb-1" for="{{ row.name_bound_field.id_for_label }}">CPU family name</label>
+              {{ row.name_bound_field }}
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-secondary mb-1" for="{{ row.vendor_bound_field.id_for_label }}">CPU vendor</label>
+              {{ row.vendor_bound_field }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small text-secondary mb-1" for="{{ row.description_bound_field.id_for_label }}">Description (optional)</label>
+              {{ row.description_bound_field }}
+            </div>
+          </div>
+        {% endfor %}
+      </fieldset>
+    </div>
+  </div>
+
+  {% if form.release_field_groups %}
+  <div class="card mb-3">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title h5 mb-0">AlmaLinux compatibility</h2>
+        <p class="card-subtitle text-secondary small mb-0 mt-1">
+          {% comment %}A minimum-minor column stood here. Certification is per major now,
+             matching the software catalog.{% endcomment %}
+          Tick each major AlmaLinux release this listing is certified on.
+        </p>
+      </div>
+    </div>
+    <div class="card-body">
+      <table class="table table-sm align-middle mb-0" style="max-width: 36rem;">
+        <thead>
+          <tr><th>Certified</th></tr>
+        </thead>
+        <tbody>
+          {% for row in form.release_field_groups %}
+            <tr>
+              <td>
+                <div class="form-check">
+                  {{ row.support_bound_field }}
+                  <label class="form-check-label" for="{{ row.support_bound_field.id_for_label }}">{{ row.release }}</label>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+{% comment %}Only when there is something to ask. Reported as "the categories section is blank",
+   and it was: architecture is the only hardware facet left, it is derived from the run's own
+   kernel report, and the form excludes derived categories on the grounds that asking the
+   submitter invites an answer that contradicts the machine. So the loop had nothing to render
+   and the card was a heading, a subtitle promising a taxonomy picker, and empty space.
+
+   The guard rather than deleting the card: the machinery still works, and an admin adding a
+   hardware facet that is not derived from a run should get a picker for it without anybody
+   editing a template. Both other templates that render this same card already guard it this
+   way; hardware submit was the only one that did not.{% endcomment %}
+{% if form.category_field_groups %}
+  <div class="card mb-3">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title h5 mb-0">Categories</h2>
+        <p class="card-subtitle text-secondary small mb-0 mt-1">Tag the listing with existing taxonomy values, or propose a new value inline. Proposed values enter the review queue as pending.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row g-4">
+        {% for pair in form.category_field_groups %}
+          <div class="col-md-6">
+            <div class="category-picker">
+              <h3 class="h6 mb-2">{{ pair.category.name }}</h3>
+              {% if pair.category.picker_widget == "checkboxes" %}
+                <ul class="checkbox-list">
+                  {% for choice in pair.multiselect_bound_field %}
+                    <li>
+                      <div class="form-check">
+                        {{ choice.tag }}
+                        <label class="form-check-label" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label>
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                {# dropdown or multiselect: render the bound field as-is. #}
+                {{ pair.multiselect_bound_field }}
+              {% endif %}
+              {% if pair.propose_bound_field %}
+                <div class="propose-input">
+                  <label class="form-label small text-secondary mb-1" for="{{ pair.propose_bound_field.id_for_label }}">
+                    Propose new {{ pair.category.name|lower }}
+                  </label>
+                  {{ pair.propose_bound_field }}
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title h5 mb-0">Evidence</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.claimed_validation_level.id_for_label }}">Claimed validation level</label>
+          {{ form.claimed_validation_level }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.attachments.id_for_label }}">Test result attachments</label>
+          {{ form.attachments }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.submitter_notes.id_for_label }}">Submitter notes</label>
+          {{ form.submitter_notes }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-send me-1"></i>{% block submit_label %}Submit for review{% endblock %}</button>
+    <a class="btn btn-outline-secondary" href="{% block cancel_url %}{% url 'accounts:dashboard' %}{% endblock %}">Cancel</a>
+  </div>
+</form>
+
+<script nonce="{{ request.csp_nonce }}">
+  // Toggle sections tagged with data-kind-only so they only show for the
+  // matching `kind` (System vs Component). Applies on initial load AND on
+  // every change of the kind select so switching back and forth stays tidy.
+  (() => {
+    const kindSelect = document.getElementById("{{ form.kind.id_for_label }}");
+    if (!kindSelect) return;
+    const applyVisibility = () => {
+      const kind = kindSelect.value;
+      document.querySelectorAll("[data-kind-only]").forEach(el => {
+        el.hidden = el.dataset.kindOnly !== kind;
+      });
+    };
+    kindSelect.addEventListener("change", applyVisibility);
+    applyVisibility();
+  })();
+
+  // Reveal the inline new-vendor fieldset when the user picks "Propose new
+  // vendor" from the vendor dropdown. Hide and ignore otherwise.
+  (() => {
+    const vendorSelect = document.getElementById("{{ form.vendor.id_for_label }}");
+    const section = document.getElementById("inline-vendor-section");
+    if (!vendorSelect || !section) return;
+    const sync = () => { section.hidden = vendorSelect.value !== "__new__"; };
+    vendorSelect.addEventListener("change", sync);
+    sync();
+  })();
+</script>
+
+{% endblock %}

@@ -1,0 +1,9 @@
+{{ event.description }}
+{% if target %}
+Regarding: {{ target }}
+{% endif %}
+Open Lumina to act on it:
+{{ action_url }}
+
+--
+You are receiving this because you take part in AlmaLinux hardware certification.

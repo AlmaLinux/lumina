@@ -1,0 +1,25 @@
+{% comment %}Why a part is shown under the name it is, and whether anybody should say more.
+
+   A name a rule produced and a name straight off the machine look identical on a review page, and
+   they are not the same thing to somebody deciding whether to say anything: the first can be
+   corrected by editing a row, and the second, where the name identifies nothing, is the case that
+   wants a rule written. Without this a part that had been silently transformed and a part nobody
+   had ever looked at read the same.
+
+   Takes: naming (from component_match.gpu_name_status).
+{% endcomment %}
+{% if naming %}
+  {% if naming.rule %}
+    <a class="badge text-bg-info text-decoration-none"
+       href="{% url 'review:naming_rule_edit' naming.rule.pk %}"
+       title="Reported as &quot;{{ naming.reported }}&quot;. Click to change the rule.">
+      {% if naming.changed %}renamed by rule{% else %}named by rule{% endif %}
+    </a>
+  {% endif %}
+  {% if naming.unidentified %}
+    <span class="badge text-bg-warning"
+          title="This name does not identify a part. A naming rule would give it one.">
+      identifies nothing
+    </span>
+  {% endif %}
+{% endif %}

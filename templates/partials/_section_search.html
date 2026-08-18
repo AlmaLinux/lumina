@@ -1,0 +1,26 @@
+{% comment %}The search box for one paginated section.
+
+   A GET form carrying every other parameter on the page as hidden fields, so searching one table
+   does not reset another reader's filter or tab, and deliberately *not* carrying this section's
+   own page number: a new search goes to the first page of the new result rather than to page 7 of
+   a list that may no longer have seven pages.
+
+   Renders nothing for a list that fits on one page: the reader can already see all of it, and a
+   search box over three rows is clutter on a page that carries eight of them.
+
+   Takes: section, and optionally placeholder.
+{% endcomment %}
+{% if section.searchable %}
+<form method="get" class="d-flex gap-1">
+  {% for name, value in section.hidden %}
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  <input type="search" class="form-control form-control-sm w-auto" name="{{ section.search_param }}"
+         value="{{ section.query }}" placeholder="{{ placeholder|default:'Search…' }}"
+         aria-label="{{ placeholder|default:'Search' }}">
+  <button class="btn btn-sm btn-outline-secondary" type="submit">Search</button>
+  {% if section.query %}
+    <a class="btn btn-sm btn-link" href="?{{ section.keep }}">Clear</a>
+  {% endif %}
+</form>
+{% endif %}

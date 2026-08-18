@@ -1,0 +1,471 @@
+{% extends "base_admin.html" %}
+{% block page_title %}{% if rule %}Edit naming rule{% else %}New naming rule{% endif %}{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    What a part should be called, and what it applies to. Nothing is saved until you press Save,
+    and saving renames nothing until you apply it on
+    <a href="{% url 'review:naming_plan' %}">Component naming</a>.
+  </p>
+{% endblock %}
+{% block content %}
+
+{% comment %}Autocomplete for a reviewer who already knows the path and is typing it. Options
+   carry the path and nothing else: with the value as the option's label, Firefox filtered on the
+   label, so typing "pci" matched none of the pci fields and the list looked empty. The values
+   live in the picker below, where they are visible without typing anything at all.{% endcomment %}
+<datalist id="field-paths">
+  {% comment %}Both forms of every path. A reader who only ever sees
+     dmi.processor.0.Part Number has no way to know the wildcard exists.{% endcomment %}
+  {% for group, entries in field_groups %}
+    {% for field in entries %}
+      <option value="{{ field.path }}"></option>
+      {% if field.wildcard != field.path %}<option value="{{ field.wildcard }}"></option>{% endif %}
+    {% endfor %}
+  {% endfor %}
+</datalist>
+
+{% if rule.built_in %}
+  {% comment %}Built-in rules reproduce behaviour that used to be in code, so they are the ones
+     most likely to be matching parts the reviewer is not looking at.{% endcomment %}
+  <div class="alert alert-warning py-2 small" style="max-width: 70rem;">
+    This rule ships with lumina, reproducing naming that used to be built in. Changing it changes
+    how every machine of that shape is named, not only the one you are looking at.
+  </div>
+{% endif %}
+
+<form method="post" id="rule-form" class="row g-3" style="max-width: 70rem;">
+  {% csrf_token %}
+  {% comment %}Whichever page this was opened from, carried so a rejected rule comes back with
+     its prefills and the preview has something to preview against.{% endcomment %}
+  {% for name, value in source.items %}
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  {% comment %}Which rule this is, so Preview can ask the same question Save does. Preview posts
+     the form to a view that builds a throwaway rule, and one with no id looked like a second rule
+     with the same match as this one.{% endcomment %}
+  {% if rule %}<input type="hidden" name="rule" value="{{ rule.pk }}">{% endif %}
+
+  <div class="col-md-3">
+    <label class="form-label small">Kind</label>
+    <select class="form-select form-select-sm" name="kind">
+      <option value="">any</option>
+      {% for value, label in kinds %}
+        <option value="{{ value }}" {% if value == prefill.kind %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% comment %}A rule for a kind nothing consults saves and validates and then does nothing, and
+       the reviewer has no way to tell that from a match that is simply wrong.{% endcomment %}
+    <div class="form-text">Kinds marked "not applied yet" accept rules that nothing reads.</div>
+  </div>
+  {% comment %}The pattern and the field it runs against. Regexes live here rather than in the
+     template because a template's string literals go through Jinja's escape rules first, where
+     \b becomes a backspace and \s is deprecated outright - a pattern written the obvious way
+     would silently match nothing.{% endcomment %}
+  <div class="col-md-4">
+    <label class="form-label small">Pattern runs against</label>
+    <input class="form-control form-control-sm font-monospace" name="match_field"
+           list="field-paths" value="{{ prefill.match_field }}" placeholder="model">
+    <div class="form-text">
+      Blank means the part's own model. Anything in <strong>Fields you can use</strong> works
+      here; clicking one fills it in.
+      <br><code>*</code> stands for any list index, so
+      <code>dmi.processor.*.Part Number</code> reads whichever processor has one &mdash; which is
+      what you want on a two-socket machine.
+    </div>
+  </div>
+  <div class="col-md-5">
+    <label class="form-label small">And matches (regular expression, optional)</label>
+    <input class="form-control form-control-sm font-monospace" name="model_pattern"
+           value="{{ prefill.model_pattern }}">
+    <div class="form-text">Case-insensitive. Its captures are what the template reads as
+      <code>match.1</code>, <code>match.2</code>, or by name for
+      <code>(?P&lt;name&gt;...)</code>.</div>
+  </div>
+
+  {% comment %}Conditions as rows rather than named inputs. Vendor and the PCI ids used to be
+     three fields of their own, which made three of the hundreds of readable paths look like the
+     only three, and fixed each to one operator. Any path, any operator, as many rows as the part
+     needs.{% endcomment %}
+  <div class="col-12">
+    <label class="form-label small">Applies when all of these hold</label>
+    <div id="conditions">
+      {% for clause in conditions %}
+        <div class="row g-2 mb-1 condition-row">
+          <div class="col-md-5">
+            <input class="form-control form-control-sm font-monospace" name="condition_field"
+                   list="field-paths" value="{{ clause.field }}" placeholder="pci.vendor_id">
+          </div>
+          <div class="col-md-2">
+            <select class="form-select form-select-sm" name="condition_op">
+              {% for op in operators %}
+                <option value="{{ op }}" {% if op == clause.op %}selected{% endif %}>{{ op }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <input class="form-control form-control-sm" name="condition_value"
+                   value="{{ clause.value }}">
+          </div>
+          <div class="col-md-1">
+            <button type="button" class="btn btn-sm btn-outline-secondary w-100 drop-row">&times;</button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="add-condition">
+      Add a condition
+    </button>
+    <div class="form-text">
+      Start typing a field to see what this machine reports and what it says. With no conditions
+      at all the rule applies to every part of the kind above.
+    </div>
+  </div>
+
+  <div class="col-12">
+    <label class="form-label small">Name to build</label>
+    <input class="form-control form-control-sm font-monospace" name="build"
+           value="{{ prefill.build }}"
+           {% comment %}``templatetag`` rather than a quoted literal: Django's lexer cannot read
+              {% templatetag openvariable %} inside a variable tag, and the page that could not
+              render was the one shown when a rule is rejected.{% endcomment %}
+           placeholder="{% templatetag openvariable %} model {% templatetag closevariable %}">
+    <div class="form-text">
+      A Jinja template over the same paths the conditions use, prefilled with what this part is
+      called now.
+    </div>
+  </div>
+  <div class="col-12">
+    <label class="form-label small">If that is empty, build instead (optional)</label>
+    <input class="form-control form-control-sm font-monospace" name="fallback"
+           value="{{ prefill.fallback }}">
+    <div class="form-text">For a machine that did not report the field the line above needs.</div>
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label small">Priority</label>
+    <input class="form-control form-control-sm" name="priority" value="{{ prefill.priority }}">
+    <div class="form-text">Lowest first.</div>
+  </div>
+  <div class="col-md-9">
+    <label class="form-label small">Why this rule exists</label>
+    <input class="form-control form-control-sm" name="notes" value="{{ prefill.notes }}">
+  </div>
+
+  {% comment %}The two questions somebody writing a rule has: what would this call the part in
+     front of me, and how much else would it touch. The second is invisible without asking, and it
+     is what turns "this looks right" into a decision.{% endcomment %}
+  <div class="col-12">
+    <div class="card bg-body-tertiary">
+      <div class="card-body py-2 d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="preview-btn">Preview</button>
+        <span id="preview-out" class="small text-secondary">Not previewed yet.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    {% comment %}The reversible way to stop a rule, and the reason deleting one is tucked away
+       below: a rule that turns out too broad is usually worth keeping and turning off, because
+       the row records a judgement somebody made and why.{% endcomment %}
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="enabled" id="enabled"
+             {% if prefill.enabled %}checked{% endif %}>
+      <label class="form-check-label small" for="enabled">
+        Enabled. Turn this off to stop the rule naming anything without losing it.
+      </label>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <button class="btn btn-primary" type="submit">Save rule</button>
+    <a class="btn btn-link" href="{% url 'review:naming_plan' %}">Cancel</a>
+  </div>
+</form>
+
+{% if rule %}
+  <details class="mt-3 small" style="max-width: 70rem;">
+    <summary class="text-secondary" style="cursor:pointer">Delete this rule</summary>
+    <p class="text-secondary mt-2 mb-2">
+      For a rule that should not have been written at all. Parts it already named keep their
+      names, since renaming them back is its own decision. To stop a rule you want to keep, untick
+      Enabled above.
+    </p>
+    <form method="post" action="{% url 'review:naming_rule_delete' rule.pk %}">
+      {% csrf_token %}
+      <button class="btn btn-sm btn-outline-danger" type="submit">Delete permanently</button>
+    </form>
+  </details>
+{% endif %}
+
+{% comment %}The field picker. It replaced a reference table and a datalist, neither of which
+   answered the question somebody actually has: a table is not clickable, and a datalist only
+   suggests once you have typed the beginning of a path you do not know yet.
+
+   Grouped, because "what is there under pci" is the question. Clickable, because the path then
+   goes where it is needed without being retyped - into a condition, or into a name template as
+   the expression that reads it, which for a key with a space is not the path.{% endcomment %}
+<div class="row g-3 mt-1" style="max-width: 70rem;">
+<div class="col-lg-7">
+<div class="card">
+  <div class="card-body py-2">
+    <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+      <strong class="small" id="field-picker-heading">Fields you can use</strong>
+      <input class="form-control form-control-sm" id="field-filter" style="max-width: 12rem;"
+             placeholder="Field, e.g. pci" aria-label="Filter by field name">
+      {% comment %}A separate box, because the two searches answer different questions: "what is
+         there under pci" and "where does this machine say Q80-30". One box matching either meant
+         a value search for "1" hit every path with a list index in it.{% endcomment %}
+      <input class="form-control form-control-sm" id="value-filter" style="max-width: 12rem;"
+             placeholder="Value, e.g. Q80-30" aria-label="Filter by value">
+      <span class="small text-secondary" id="field-target">
+        Click one to put it in the last field you were typing in.
+      </span>
+    </div>
+    <div id="field-list" style="max-height: 18rem; overflow-y: auto;">
+      {% for group, entries in field_groups %}
+        <div class="field-group">
+          <div class="small fw-semibold text-secondary mt-2">{{ group }}</div>
+          {% for field in entries %}
+            <button type="button" class="btn btn-link btn-sm p-0 d-block text-start field-pick"
+                    data-path="{{ field.path }}" data-value="{{ field.value }}"
+                    data-expr="{{ field.expr }}" data-wildcard="{{ field.wildcard }}">
+              <code>{{ field.path }}</code>
+              <span class="text-secondary">
+                {% if field.value %}{{ field.value }}{% else %}(not reported){% endif %}
+              </span>
+            </button>
+          {% endfor %}
+        </div>
+      {% empty %}
+        <p class="small text-secondary mb-0">Nothing to suggest.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+</div>
+
+{% comment %}The other half of writing a rule. The field list says what there is to match on and
+   says nothing about how to match it, and the pattern is where somebody who is not a regular
+   expression person gets stuck - particularly on groups, which are the only reason to write one
+   here at all: a pattern that matches and captures nothing can only gate, and the interesting
+   rules pull a name out of a field.
+
+   Examples from this machine's own vocabulary rather than foo and bar, and the first one is the
+   pattern the shipped AMD rule uses, so a reader can go and look at it working.{% endcomment %}
+<div class="col-lg-5">
+<div class="card">
+  <div class="card-body py-2">
+    <strong class="small">Writing the pattern</strong>
+    <p class="small text-secondary mb-2">
+      It does two jobs: if it does not match, the rule does not apply, and if it does, its groups
+      are what the name is built from. Case is ignored, so <code>radeon</code> finds
+      <code>Radeon</code>.
+    </p>
+    <div>
+      <div class="small fw-semibold text-secondary">Groups</div>
+      <p class="small text-secondary mb-1">
+        Bracket the part you want to keep. Against
+        <code>cpu.model</code> holding
+        <em>AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics</em>:
+      </p>
+      {% verbatim %}
+      <table class="table table-sm small mb-2">
+        <thead><tr><th>Pattern</th><th>Template</th><th>Gives</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>w/ (Radeon \S+)</code></td>
+            <td><code>{{ match.1 }}</code></td>
+            <td>Radeon 780M</td>
+          </tr>
+          <tr>
+            <td><code>w/ (?P&lt;igpu&gt;Radeon \S+)</code></td>
+            <td><code>{{ match.igpu }}</code></td>
+            <td>Radeon 780M</td>
+          </tr>
+          <tr>
+            <td><code>(Radeon) (\S+)</code></td>
+            <td><code>{{ match.2 }} by {{ match.1 }}</code></td>
+            <td>780M by Radeon</td>
+          </tr>
+          <tr>
+            <td class="text-secondary">any</td>
+            <td><code>{{ match.0 }}</code></td>
+            <td>the whole matched text</td>
+          </tr>
+        </tbody>
+      </table>
+      {% endverbatim %}
+      <p class="small text-secondary mb-3">
+        Number them left to right by their opening bracket. <code>(?:&hellip;)</code> groups
+        without capturing, for a choice you do not want to read back:
+        <code>w(?:/|ith)</code> accepts both <code>w/</code> and <code>with</code>, and is
+        still no <code>match.1</code>.
+      </p>
+
+      <div class="small fw-semibold text-secondary">Pieces</div>
+      <table class="table table-sm small mb-0">
+        <tbody>
+          <tr><td><code>.</code></td><td>any one character</td></tr>
+          <tr><td><code>\d</code> <code>\w</code> <code>\s</code></td>
+              <td>a digit, a letter or digit, a space</td></tr>
+          <tr><td><code>\S</code></td><td>anything but a space, so: one word</td></tr>
+          <tr><td><code>*</code> <code>+</code> <code>?</code></td>
+              <td>none or more, one or more, none or one</td></tr>
+          <tr><td><code>*?</code> <code>+?</code></td>
+              <td>the same, stopping as early as it can</td></tr>
+          <tr><td><code>[MK]</code> <code>[^MK]</code></td>
+              <td>one of these, anything but these</td></tr>
+          <tr><td><code>a|b</code></td><td>either</td></tr>
+          <tr><td><code>^</code> <code>$</code></td><td>the start, the end</td></tr>
+          <tr><td><code>\b</code></td>
+              <td>a word boundary, so <code>\bRX\b</code> is not <em>TRX</em></td></tr>
+          <tr><td><code>(?=x)</code> <code>(?!x)</code></td>
+              <td>followed by, not followed by</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<script nonce="{{ request.csp_nonce }}">
+  const VALUES = {};
+  document.querySelectorAll(".field-pick").forEach(b => { VALUES[b.dataset.path] = b.dataset.value; });
+
+  // Which input a picked field goes into. Tracked on focus rather than guessed, so the same list
+  // serves the conditions and the two name templates: the reviewer clicks into what they are
+  // editing, then clicks the field.
+  let target = null;
+  const TARGETS = "[name=condition_field], [name=build], [name=fallback], [name=model_pattern],"
+    + " [name=match_field]";
+  const label = document.getElementById("field-target");
+  document.addEventListener("focusin", event => {
+    if (!event.target.matches(TARGETS)) return;
+    target = event.target;
+    const name = target.name === "condition_field" ? "this condition" : target.name;
+    label.textContent = `Click a field to put it in ${name}.`;
+  });
+
+  function insert(button) {
+    // Default to the name, since that is the field somebody lands on the page to write and the
+    // one where a click with no target at all is least surprising.
+    const into = target || document.querySelector("[name=build]");
+    if (into.name === "match_field") {
+      // The wildcard form, which is what a rule almost always wants: "whichever processor
+      // structure has a part number", not "the first one".
+      into.value = button.dataset.wildcard || button.dataset.path;
+      return;
+    }
+    if (into.name === "condition_field") {
+      into.value = button.dataset.path;
+      const row = into.closest(".condition-row");
+      const value = row && row.querySelector("[name=condition_value]");
+      if (value && !value.value) value.value = button.dataset.value;
+      return;
+    }
+    // A template reads the field through an expression, and for a key with a space the expression
+    // is not the path: dmi.processor.0["Part Number"], not dmi.processor.0.Part Number.
+    const text = into.name === "model_pattern" ? button.dataset.value : button.dataset.expr;
+    // Only a caret the reviewer actually put somewhere decides where the text lands: an input
+    // nobody has touched reports position zero, and prepending to the name they can see is not
+    // what a click means.
+    const end = into.value.length;
+    const placed = into === target && into.selectionStart !== null;
+    const at = placed ? into.selectionStart : end;
+    const to = placed ? into.selectionEnd : end;
+    into.value = into.value.slice(0, at) + text + into.value.slice(to);
+    into.focus();
+    into.setSelectionRange(at + text.length, at + text.length);
+  }
+
+  document.querySelectorAll(".field-pick").forEach(button => {
+    button.addEventListener("click", () => insert(button));
+  });
+
+  const byField = document.getElementById("field-filter");
+  const byValue = document.getElementById("value-filter");
+
+  function filterFields() {
+    // Both boxes narrow, so "pci" and "8086" together find the one field that is both.
+    const field = byField.value.trim().toLowerCase();
+    const value = byValue.value.trim().toLowerCase();
+    document.querySelectorAll(".field-pick").forEach(button => {
+      button.hidden = !(
+        (!field || button.dataset.path.toLowerCase().includes(field))
+        && (!value || button.dataset.value.toLowerCase().includes(value))
+      );
+    });
+    // A heading with nothing under it reads as a group that has no fields.
+    document.querySelectorAll(".field-group").forEach(group => {
+      group.hidden = !group.querySelector(".field-pick:not([hidden])");
+    });
+  }
+  byField.addEventListener("input", filterFields);
+  byValue.addEventListener("input", filterFields);
+
+  function wire(row) {
+    row.querySelector(".drop-row").addEventListener("click", () => row.remove());
+    const field = row.querySelector("[name=condition_field]");
+    // Picking a field fills in what this machine says for it, which is the value somebody
+    // matching on it almost always wants and would otherwise copy by hand.
+    field.addEventListener("change", () => {
+      const value = row.querySelector("[name=condition_value]");
+      if (!value.value && VALUES[field.value] !== undefined) value.value = VALUES[field.value];
+    });
+  }
+  document.querySelectorAll(".condition-row").forEach(wire);
+
+  document.getElementById("add-condition").addEventListener("click", () => {
+    const rows = document.getElementById("conditions");
+    const template = document.querySelector(".condition-row");
+    const row = template
+      ? template.cloneNode(true)
+      : (() => { const d = document.createElement("div"); d.className = "row g-2 mb-1 condition-row";
+                 d.innerHTML = document.getElementById("blank-row").innerHTML; return d; })();
+    row.querySelectorAll("input").forEach(i => { i.value = ""; });
+    rows.appendChild(row);
+    wire(row);
+  });
+
+  document.getElementById("preview-btn").addEventListener("click", async () => {
+    const form = document.getElementById("rule-form");
+    const out = document.getElementById("preview-out");
+    out.textContent = "Checking...";
+    const response = await fetch("{% url 'review:naming_preview' %}", {
+      method: "POST", body: new FormData(form),
+      headers: {"X-CSRFToken": form.querySelector("[name=csrfmiddlewaretoken]").value},
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      out.textContent = Object.entries(data.errors)
+        .map(([field, errs]) => `${field}: ${errs.join(" ")}`).join("; ");
+      out.className = "small text-danger";
+      return;
+    }
+    const named = data.devices.filter(d => d.matched)
+      .map(d => `${d.reported} becomes ${d.named}`).join("; ");
+    out.textContent = (named || "Matches nothing on this run.")
+      + ` · would rename ${data.affected} catalogued part(s).`;
+    out.className = "small " + (data.affected > 20 ? "text-warning" : "text-secondary");
+  });
+</script>
+
+<template id="blank-row">
+  <div class="col-md-5">
+    <input class="form-control form-control-sm font-monospace" name="condition_field"
+           list="field-paths" placeholder="pci.vendor_id">
+  </div>
+  <div class="col-md-2">
+    <select class="form-select form-select-sm" name="condition_op">
+      {% for op in operators %}<option value="{{ op }}">{{ op }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <input class="form-control form-control-sm" name="condition_value">
+  </div>
+  <div class="col-md-1">
+    <button type="button" class="btn btn-sm btn-outline-secondary w-100 drop-row">&times;</button>
+  </div>
+</template>
+{% endblock %}

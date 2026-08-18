@@ -1,0 +1,60 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Edit {{ vendor.name }}{% endblock %}
+{% block page_subtitle %}<p class="text-secondary mb-0">Propose changes to the {{ vendor.name }} profile. Changes are reviewed by AlmaLinux before going live.</p>{% endblock %}
+{% block content %}
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+
+  {% include "catalog/_form_errors.html" %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3 text-center">
+          <label class="form-label">Current logo</label>
+          <div>
+            {% if vendor.logo %}
+              <img src="{{ vendor.logo.url }}" alt="{{ vendor.name }} logo"
+                   style="max-width: 160px; max-height: 80px;">
+            {% else %}
+              <span class="text-secondary fst-italic">No logo set.</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-md-9">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label" for="{{ form.name.id_for_label }}">Vendor name</label>
+              {{ form.name }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="{{ form.contact_email.id_for_label }}">Contact email</label>
+              {{ form.contact_email }}
+            </div>
+            <div class="col-md-8">
+              <label class="form-label" for="{{ form.homepage.id_for_label }}">Homepage</label>
+              {{ form.homepage }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="{{ form.logo.id_for_label }}">Replace logo</label>
+              {{ form.logo }}
+              <div class="form-text">Leave blank to keep the current logo.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+              {{ form.description }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-send me-1"></i>Submit for review</button>
+    <a class="btn btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
+  </div>
+</form>
+
+{% endblock %}
