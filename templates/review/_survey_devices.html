@@ -1,0 +1,156 @@
+{% comment %}The submission's hardware as devices. Its own include because the detail
+   page is otherwise a summary, and this is the part a reviewer actually reads when a
+   report looks wrong. Naming comes from the shared PCI rules (see survey/devices.py).
+{% endcomment %}
+<div class="card mb-3"><div class="card-body">
+  <h2 class="h6">Devices</h2>
+  <p class="text-secondary small">
+    Everything the report enumerated, named by the same PCI rules the catalog uses.
+  </p>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Network ({{ devices.nics|length }})</h3>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr>
+        <th>Device</th><th>Interface</th><th>PCI</th><th>Driver</th><th>Speed</th><th>Link</th>
+      </tr></thead>
+      <tbody>
+        {% for d in devices.nics %}
+          <tr>
+            <td>{{ d.vendor }} {{ d.model|default:"(unnamed)" }}</td>
+            <td><code>{{ d.interface|default:"-" }}</code></td>
+            <td><code>{{ d.pci|default:"-" }}</code></td>
+            <td>{{ d.driver|default:"-" }}</td>
+            <td>{% if d.speed_mbps %}{{ d.speed_mbps }} Mb/s{% else %}-{% endif %}</td>
+            <td>{{ d.link|default:"-" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Graphics ({{ devices.gpus|length }})</h3>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr>
+        <th>Device</th><th>PCI</th><th>Driver</th><th>VBIOS</th>
+      </tr></thead>
+      <tbody>
+        {% for d in devices.gpus %}
+          <tr>
+            <td>{{ d.vendor }} {{ d.model|default:"(unnamed)" }}</td>
+            <td><code>{{ d.pci|default:"-" }}</code></td>
+            <td>{{ d.driver|default:"-" }}</td>
+            <td>{{ d.vbios|default:"-" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Other PCI devices ({{ devices.other_pci|length }})</h3>
+  {% if not devices.has_pci_enumeration %}
+    <p class="text-secondary small mb-1">
+      This report carried no full PCI enumeration (an older suite), so only network and
+      graphics devices were reported. An empty list here means "not reported", not "none".
+    </p>
+  {% endif %}
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr>
+        <th>Class</th><th>Device</th><th>PCI</th><th>Driver</th>
+      </tr></thead>
+      <tbody>
+        {% for d in devices.other_pci %}
+          <tr>
+            <td class="text-secondary">{{ d.klass|default:"-" }}</td>
+            <td>{{ d.vendor }} {{ d.model|default:"(unnamed)" }}</td>
+            <td><code>{{ d.pci|default:"-" }}</code></td>
+            <td>{{ d.driver|default:"-" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Storage ({{ devices.disks|length }})</h3>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr><th>Name</th><th>Transport</th><th>Size</th></tr></thead>
+      <tbody>
+        {% for d in devices.disks %}
+          <tr>
+            <td><code>{{ d.name|default:"-" }}</code></td>
+            <td>{{ d.transport|default:"-" }}</td>
+            <td>{% if d.bytes %}{{ d.bytes|filesizeformat }}{% else %}-{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Memory modules ({{ devices.dimms|length }})</h3>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr>
+        <th>Slot</th><th>Size</th><th>Type</th><th>Speed</th><th>Manufacturer</th><th>Part</th>
+      </tr></thead>
+      <tbody>
+        {% for d in devices.dimms %}
+          <tr>
+            <td><code>{{ d.locator|default:"-" }}</code></td>
+            <td>{% if d.size_bytes %}{{ d.size_bytes|filesizeformat }}{% else %}-{% endif %}</td>
+            <td>{{ d.type|default:"-" }}</td>
+            <td>{% if d.speed_mts %}{{ d.speed_mts }} MT/s{% else %}-{% endif %}</td>
+            <td>{{ d.manufacturer|default:"-" }}</td>
+            <td><code>{{ d.part_number|default:"-" }}</code></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="small fw-semibold mt-3 mb-1">Processors ({{ devices.cpus|length }})</h3>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr>
+        <th>Model</th><th>Vendor</th><th>Sockets</th><th>Cores</th><th>Threads</th>
+      </tr></thead>
+      <tbody>
+        {% for d in devices.cpus %}
+          <tr>
+            <td>{{ d.model|default:"-" }}</td>
+            <td class="text-secondary">{{ d.vendor|default:"-" }}</td>
+            <td>{{ d.sockets|default:"-" }}</td>
+            <td>{{ d.cores|default:"-" }}</td>
+            <td>{{ d.threads|default:"-" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-secondary">None reported.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if devices.chassis.type or devices.bmc.present %}
+    <h3 class="small fw-semibold mt-3 mb-1">Platform</h3>
+    <dl class="row small mb-0">
+      {% if devices.chassis.type %}
+        <dt class="col-sm-4">Chassis</dt><dd class="col-sm-8">{{ devices.chassis.type }}</dd>
+      {% endif %}
+      {% if devices.bmc.present %}
+        <dt class="col-sm-4">BMC</dt><dd class="col-sm-8">present</dd>
+      {% endif %}
+    </dl>
+  {% endif %}
+</div></div>

@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: lumina
+  author: AlmaLinux OS Foundation
+  description: AlmaLinux hardware certification catalog (Django app)
+  license: AGPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+dependencies: []

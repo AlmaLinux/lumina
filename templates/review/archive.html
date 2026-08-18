@@ -1,0 +1,145 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Review archive{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    Work that has already been decided, and the activity log behind it. The queue shows
+    only what is still open.
+  </p>
+{% endblock %}
+{% block content %}
+
+{% comment %}Two panes, because they answer different questions. "Decisions" is the
+   archive of the queue: one row per reviewed object, in the state it is in now, with the
+   note the reviewer left. "Activity" is the append-only log, which also carries actions
+   that are not a decision about a reviewable object at all - a listing tweak, a taxonomy
+   value promoted, a token issued - and keeps a history rather than only the latest state.
+
+   Reachable by reviewers rather than only by staff on purpose. All of this was in
+   ``/admin/audit/`` from the start, which is exactly where a reviewer cannot go: the
+   review UI lives outside the admin so reviewers need no staff flag.
+{% endcomment %}
+
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h2 class="card-title h5 mb-0">
+      Decisions <span class="badge text-bg-secondary">{{ rows|length }}</span>
+    </h2>
+    <form method="get" class="d-flex gap-2 align-items-center">
+      {% if selected_action %}<input type="hidden" name="action" value="{{ selected_action }}">{% endif %}
+      {% if actor_query %}<input type="hidden" name="actor" value="{{ actor_query }}">{% endif %}
+      <label class="form-label mb-0 text-secondary small" for="kind">Type</label>
+      <select class="form-select form-select-sm" id="kind" name="kind"
+              data-submit-on-change>
+        <option value="">All</option>
+        {% for k in kinds %}
+          <option value="{{ k }}" {% if k == selected_kind %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button class="btn btn-sm btn-outline-secondary">Filter</button></noscript>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Decided</th><th>Type</th><th>Subject</th><th>Outcome</th>
+          <th>Reviewer</th><th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td class="text-secondary small text-nowrap">
+              {% if row.at %}{{ row.at|date:"Y-m-d H:i" }}
+              {% else %}<span title="Released on a timer, with no reviewer">automatic</span>{% endif %}
+            </td>
+            <td class="small text-nowrap">{{ row.kind }}</td>
+            <td>
+              {% if row.url %}<a href="{{ row.url }}">{{ row.subject }}</a>
+              {% else %}{{ row.subject }}{% endif %}
+            </td>
+            <td><span class="status-pill status-{{ row.status }}">{{ row.outcome }}</span></td>
+            <td class="small">{{ row.by|default:"-" }}</td>
+            <td class="small text-secondary">{{ row.notes|default:"" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center text-secondary py-4">
+              Nothing has been decided yet.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h2 class="card-title h5 mb-0">
+      Activity <span class="badge text-bg-secondary">{{ page_obj.paginator.count }}</span>
+    </h2>
+    <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
+      {% if selected_kind %}<input type="hidden" name="kind" value="{{ selected_kind }}">{% endif %}
+      <label class="form-label mb-0 text-secondary small" for="action">Action</label>
+      <select class="form-select form-select-sm" id="action" name="action">
+        <option value="">All</option>
+        {% for a in actions %}
+          <option value="{{ a }}" {% if a == selected_action %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+      <label class="form-label mb-0 text-secondary small" for="actor">Actor</label>
+      <input class="form-control form-control-sm" id="actor" name="actor"
+             value="{{ actor_query }}" placeholder="username" style="max-width: 12rem;">
+      <button class="btn btn-sm btn-outline-secondary">Filter</button>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr><th>When</th><th>Action</th><th>Actor</th><th>Target</th><th>IP</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for entry in page_obj %}
+          <tr>
+            <td class="text-secondary small text-nowrap">{{ entry.created_at|date:"Y-m-d H:i:s" }}</td>
+            <td class="small"><code>{{ entry.action }}</code></td>
+            <td class="small">{{ entry.actor|default:"-" }}</td>
+            <td class="small text-secondary">
+              {{ entry.target_content_type.model|default:"?" }} #{{ entry.target_id }}
+            </td>
+            <td class="small text-secondary">{{ entry.ip|default:"-" }}</td>
+            <td class="small text-secondary">{{ entry.notes|truncatechars:80 }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center text-secondary py-4">
+              No activity matches this filter.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page_obj.paginator.num_pages > 1 %}
+    <div class="card-footer d-flex justify-content-between align-items-center">
+      <span class="text-secondary small">
+        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+      </span>
+      <span class="d-flex gap-2">
+        {% comment %}The filters are carried in the links so paging does not silently
+           widen the result set back to everything.{% endcomment %}
+        {% if page_obj.has_previous %}
+          <a class="btn btn-sm btn-outline-secondary"
+             href="?page={{ page_obj.previous_page_number }}{% if selected_action %}&action={{ selected_action }}{% endif %}{% if actor_query %}&actor={{ actor_query }}{% endif %}{% if selected_kind %}&kind={{ selected_kind }}{% endif %}">Previous</a>
+        {% endif %}
+        {% if page_obj.has_next %}
+          <a class="btn btn-sm btn-outline-secondary"
+             href="?page={{ page_obj.next_page_number }}{% if selected_action %}&action={{ selected_action }}{% endif %}{% if actor_query %}&actor={{ actor_query }}{% endif %}{% if selected_kind %}&kind={{ selected_kind }}{% endif %}">Next</a>
+        {% endif %}
+      </span>
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

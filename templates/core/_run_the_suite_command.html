@@ -1,0 +1,13 @@
+{% comment %}The command, in one place, because two pages tell people to run it.
+
+A placeholder until packaging settles. It lives here rather than being written out twice so that
+the real command replaces it once, instead of leaving a public page and a signed-in page
+disagreeing about how to install the thing.
+
+``user-select-all`` rather than a copy button. It is this project's existing affordance for a value
+the reader has to take away, one click selects the whole command, and it cannot be broken by a
+script that did not load. Deliberately one line, so it survives being copied out of a browser.
+
+The ampersands are escaped because the template engine would otherwise leave them bare in the
+markup; selecting the rendered text still yields a literal ``&&``.{% endcomment %}
+<code class="user-select-all">sudo dnf -y install alma-cert &amp;&amp; sudo alma-cert run</code>

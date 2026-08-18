@@ -1,0 +1,151 @@
+/* Management UI styles. Vanilla Bootstrap 5 with a fixed-width sidebar.
+   Palette per the AlmaLinux brand book (almalinux.org/branding): Black
+   Pearl surfaces, Science Blue actions, Montserrat type. */
+
+:root {
+    --alx-navy: #082336;        /* Black pearl */
+    --alx-navy-2: #000518;      /* Darkest */
+    --alx-blue: #0069da;        /* Science blue */
+    --alx-blue-hover: #004bbc;  /* Dark blue */
+    --lumina-sidebar-w: 240px;
+    --bs-primary: var(--alx-blue);
+    --bs-primary-rgb: 0, 105, 218;
+    --bs-link-color: var(--alx-blue);
+    --bs-link-hover-color: var(--alx-blue-hover);
+}
+
+body.lumina-admin {
+    background: #faf5f5;  /* Soft peach */
+    font-family: "Montserrat", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.btn-primary {
+    --bs-btn-bg: var(--alx-blue);
+    --bs-btn-border-color: var(--alx-blue);
+    --bs-btn-hover-bg: var(--alx-blue-hover);
+    --bs-btn-hover-border-color: var(--alx-blue-hover);
+}
+
+/* Shell ----------------------------------------------------------------- */
+.lumina-admin-shell { display: flex; min-height: 100vh; }
+
+.lumina-sidebar {
+    width: var(--lumina-sidebar-w);
+    flex-shrink: 0;
+    background: var(--alx-navy);
+    color: #fff;
+    padding: 1rem 0;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+}
+.lumina-sidebar-brand {
+    display: block;
+    padding: 0.5rem 1.25rem 1rem;
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.lumina-sidebar-brand:hover { color: #fff; }
+.lumina-sidebar-section {
+    padding: 0.75rem 1.25rem 0.25rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: rgba(255, 255, 255, 0.45);
+    font-weight: 600;
+}
+.lumina-sidebar .nav-link {
+    color: rgba(255, 255, 255, 0.85);
+    padding: 0.5rem 1.25rem;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+}
+.lumina-sidebar .nav-link:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+}
+.lumina-sidebar .nav-link.active {
+    background: var(--alx-navy-2);
+    color: #fff;
+    border-left-color: var(--alx-blue);
+}
+
+/* Topbar + content ------------------------------------------------------ */
+.lumina-content {
+    flex: 1 1 auto;
+    min-width: 0;          /* allow children to shrink under flex */
+    display: flex;
+    flex-direction: column;
+}
+.lumina-topbar {
+    background: var(--alx-navy);
+    color: #fff;
+    padding: 0.5rem 1.5rem;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.lumina-main { flex: 1 1 auto; padding: 1.5rem; }
+.lumina-page-header { border-bottom: 1px solid #e1e5eb; padding-bottom: 0.75rem; }
+.lumina-footer-admin { padding: 1rem 1.5rem; border-top: 1px solid #e1e5eb; background: #fafbfc; }
+
+/* Mobile: hide the sidebar by default; toggle via .sidebar-open on body. */
+@media (max-width: 767.98px) {
+    .lumina-sidebar {
+        position: fixed; left: 0; top: 0; z-index: 1040;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+    }
+    body.sidebar-open .lumina-sidebar { transform: translateX(0); }
+}
+
+/* Buttons --------------------------------------------------------------- */
+.btn-primary {
+    --bs-btn-bg: var(--alx-blue);
+    --bs-btn-border-color: var(--alx-blue);
+    --bs-btn-hover-bg: var(--alx-blue-hover);
+    --bs-btn-hover-border-color: var(--alx-blue-hover);
+    --bs-btn-active-bg: var(--alx-blue-hover);
+    --bs-btn-active-border-color: var(--alx-blue-hover);
+}
+
+/* Status pills. The validation badges are in lumina-levels.css, shared with the
+   public side - this file used to carry its own copy with a different palette,
+   under a comment claiming they matched. */
+
+.status-pill { font-size: 0.75rem; padding: 0.35em 0.7em; border-radius: 999px; font-weight: 600; }
+.status-pending       { background: #fff3cd; color: #664d03; }
+.status-needs-changes { background: #ffe5d0; color: #7a3a00; }
+.status-approved      { background: #d1e7dd; color: #0f5132; }
+.status-rejected      { background: #f8d7da; color: #842029; }
+
+/* Submit form: per-category picker block ------------------------------- */
+.category-picker { padding: 0.5rem 0; }
+.category-picker .checkbox-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+    gap: 0.25rem 1rem;
+}
+.category-picker .checkbox-list .form-check { margin-bottom: 0.15rem; }
+.category-picker .propose-input { margin-top: 0.75rem; max-width: 24rem; }
+
+/* CPU feature flags: a collapsed <details> in the run summary. A current x86 CPU
+   advertises 150-200 of these, so the list is the one place on a run page that
+   genuinely needs a scroll of its own rather than pushing the results below the
+   fold. max-height plus overflow keeps it bounded when expanded; the flags wrap
+   because they are ~40 short tokens per line, not a table. */
+.lumina-flags > summary {
+    cursor: pointer;
+}
+.lumina-flags-all {
+    max-height: 12rem;
+    overflow-y: auto;
+    line-height: 1.9;
+}

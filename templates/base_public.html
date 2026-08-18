@@ -1,0 +1,124 @@
+{% load static %}{% comment %}
+Public catalog layout based on Tabler (Bootstrap 5 + MIT-licensed). Light
+mode only - we decided the dark-mode toggle wasn't carrying its weight.
+The navbar stays dark navy regardless via data-bs-theme="dark" on the
+header element itself, which is unrelated to the page-level theme.
+{% endcomment %}<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}AlmaLinux Hardware Catalog{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/almalinux-icon.svg' %}">
+    {# Montserrat is the AlmaLinux brand typeface (almalinux.org/branding) #}
+    {% comment %}Everything is served from this origin. No preconnect, no CDN, no font host: the
+       assets below are vendored under static/vendor so the page loads zero third-party domains,
+       which is what lets the Content-Security-Policy be as tight as it is.{% endcomment %}
+    <link rel="stylesheet" href="{% static 'vendor/montserrat/montserrat.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/tabler/tabler.min.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/tabler-icons/tabler-icons.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/lumina-levels.css' %}">
+    <link rel="stylesheet" href="{% static 'css/lumina-public.css' %}">
+    <link rel="stylesheet" href="{% static 'css/combobox.css' %}">
+    {% comment %}Shared with the other base layout: the partials both render depend on it.{% endcomment %}
+    <link rel="stylesheet" href="{% static 'css/lumina-shared.css' %}">
+    {% comment %}For a page that needs a stylesheet of its own. Declared here rather than
+       loading every page's CSS everywhere, and empty for all but a couple of pages.{% endcomment %}
+    {% block extra_head %}{% endblock %}
+    <script src="{% static 'vendor/htmx/htmx.min.js' %}" defer></script>
+  </head>
+  <body>
+    <div class="page">
+      {% comment %}expand-xl, not expand-md: six icon links plus the brand plus the session controls do
+         not fit side by side below about 1200px, and until this was raised the row was laid out
+         expanded at widths it could not fill, which is what let the items collide.{% endcomment %}
+      <header class="navbar navbar-expand-xl lumina-public-navbar sticky-top" data-bs-theme="dark">
+        <div class="container-xl">
+          <a class="navbar-brand navbar-brand-autodark" href="{% url 'core:home' %}">
+            {# Brand rule: white logo on dark backgrounds #}
+            <img src="{% static 'img/almalinux-logo-white.svg' %}" alt="AlmaLinux" height="28">
+            <span class="ms-2 text-secondary small lumina-brand-label">Hardware Catalog</span>
+          </a>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-public">
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbar-public">
+            <ul class="navbar-nav me-auto">
+              <li class="nav-item"><a class="nav-link" href="{% url 'hardware:systems' %}"><i class="ti ti-server me-1"></i>Systems</a></li>
+              <li class="nav-item"><a class="nav-link" href="{% url 'hardware:components' %}"><i class="ti ti-cpu me-1"></i>Components</a></li>
+              <li class="nav-item"><a class="nav-link" href="{% url 'software:browse' %}"><i class="ti ti-apps me-1"></i>Software</a></li>
+              <li class="nav-item"><a class="nav-link" href="{% url 'benchmarks:index' %}"><i class="ti ti-chart-bar me-1"></i>Benchmarks</a></li>
+              <li class="nav-item"><a class="nav-link" href="{% url 'results:latest_validations' %}"><i class="ti ti-certificate me-1"></i>Validations</a></li>
+              <li class="nav-item"><a class="nav-link" href="{% url 'results:stats' %}"><i class="ti ti-chart-pie me-1"></i>Statistics</a></li>
+            </ul>
+            <div class="navbar-nav flex-row align-items-center gap-2 lumina-session-controls">
+              {% if request.user.is_authenticated %}
+                {% comment %}An explicit Dashboard link: the username also points there, but a name
+                   does not read as "click me to reach your submissions", which is where a signed-in
+                   person most needs to get.{% endcomment %}
+                <a class="btn btn-ghost-light {% if request.resolver_match.view_name == 'accounts:dashboard' %}active{% endif %}"
+                   href="{% url 'accounts:dashboard' %}"><i class="ti ti-layout-dashboard me-1"></i>Dashboard</a>
+                {% comment %}title, because the name is truncated in CSS rather than in the template:
+                   the layout must hold for any length, and the full value should still be readable
+                   on hover instead of lost.{% endcomment %}
+                <a class="btn btn-ghost-light" href="{% url 'accounts:dashboard' %}"
+                   title="{{ request.user.username }}"><i class="ti ti-user me-1"></i><span
+                   class="lumina-user-name">{{ request.user.username }}</span></a>
+                {% comment %}POST, because Django's LogoutView refuses GET. ``oidc_logout`` is
+                   published by mozilla_django_oidc in production and by our own route in
+                   the devstack, so this needs no branch. There was no way to sign out at
+                   all before, which made switching between the seeded admin and reviewer
+                   accounts a cookie-clearing exercise.{% endcomment %}
+                <form method="post" action="{% url 'oidc_logout' %}" class="d-inline">
+                  {% csrf_token %}
+                  <button class="btn btn-ghost-light" type="submit">Sign out</button>
+                </form>
+              {% else %}
+                <a class="btn btn-primary" href="{% url 'oidc_authentication_init' %}">Sign in</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="page-wrapper">
+        <div class="page-body">
+          <div class="container-xl">
+            {% if messages %}
+              {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible" role="alert">
+                  <div>{{ message }}</div>
+                  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+              {% endfor %}
+            {% endif %}
+            {% block content %}{% endblock %}
+          </div>
+        </div>
+
+        <footer class="footer footer-transparent d-print-none">
+          <div class="container-xl">
+            <div class="row text-center align-items-center flex-row-reverse">
+              <div class="col-lg-auto ms-lg-auto">
+                <ul class="list-inline list-inline-dots mb-0">
+                  <li class="list-inline-item"><a href="https://almalinux.org/" class="link-secondary">AlmaLinux.org</a></li>
+                  <li class="list-inline-item"><a href="https://wiki.almalinux.org/" class="link-secondary">Wiki</a></li>
+                  <li class="list-inline-item"><a href="/api/v1/" class="link-secondary">API</a></li>
+                </ul>
+              </div>
+              <div class="col-12 col-lg-auto mt-3 mt-lg-0">
+                <ul class="list-inline list-inline-dots mb-0">
+                  <li class="list-inline-item">&copy; AlmaLinux OS Foundation</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <script src="{% static 'vendor/tabler/tabler.min.js' %}" defer></script>
+    <script src="{% static 'js/filter-panel.js' %}" defer></script>
+    <script src="{% static 'js/combobox.js' %}" defer></script>
+  </body>
+</html>

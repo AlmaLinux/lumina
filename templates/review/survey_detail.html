@@ -1,0 +1,130 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Survey submission{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    Received {{ sub.received_at|date:"Y-m-d H:i" }} &middot; {{ sub.get_origin_display }}
+    &middot; {{ sub.get_trust_tier_display }} &middot;
+    <span class="status-pill status-{{ sub.review_state }}">{{ sub.get_review_state_display }}</span>
+    &middot; <a href="{% url 'review:queue' %}">back to the queue</a>
+  </p>
+{% endblock %}
+{% block content %}
+
+{% if sub.virtual %}
+  <div class="alert alert-warning">
+    This report came from a <strong>virtual machine</strong>{% if sub.virt_kind %} ({{ sub.virt_kind }}){% endif %}.
+    The survey is bare-metal only, so it is already excluded from the published statistics.
+  </div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h6">Machine</h2>
+      <p class="text-secondary small">The facets the published statistics count.</p>
+      <dl class="row mb-0 small">
+        <dt class="col-sm-4">CPU</dt>
+        <dd class="col-sm-8">
+          {{ sub.cpu_model|default:"-" }}
+          {% if sub.cpu_sockets %}
+            <span class="text-secondary">
+              &middot; {{ sub.cpu_sockets }} socket{{ sub.cpu_sockets|pluralize }}
+              {% if sub.cpu_cores %}, {{ sub.cpu_cores }}c/{{ sub.cpu_threads }}t{% endif %}
+            </span>
+          {% endif %}
+        </dd>
+        <dt class="col-sm-4">CPU vendor</dt><dd class="col-sm-8">{{ sub.cpu_vendor|default:"-" }}</dd>
+        <dt class="col-sm-4">Memory</dt>
+        <dd class="col-sm-8">
+          {% if sub.memory_bytes %}{{ sub.memory_bytes|filesizeformat }}{% else %}-{% endif %}
+          {% if sub.memory_type %}<span class="text-secondary">&middot; {{ sub.memory_type }}</span>{% endif %}
+        </dd>
+        <dt class="col-sm-4">GPU</dt>
+        <dd class="col-sm-8">{{ sub.gpu_vendor }} {{ sub.gpu_model|default:"-" }}</dd>
+        <dt class="col-sm-4">Board</dt>
+        <dd class="col-sm-8">{{ sub.board_vendor }} {{ sub.board_model|default:"-" }}</dd>
+        <dt class="col-sm-4">OS</dt>
+        <dd class="col-sm-8">
+          {% if sub.os_major %}AlmaLinux {{ sub.os_major }}{% if sub.os_minor != None %}.{{ sub.os_minor }}{% endif %}{% else %}-{% endif %}
+          {% if sub.arch %}<span class="text-secondary">&middot; {{ sub.arch }}</span>{% endif %}
+          {% if sub.x86_64_level %}<span class="text-secondary">&middot; CPU supports {{ sub.x86_64_level }}</span>{% endif %}
+        </dd>
+        <dt class="col-sm-4">Kernel</dt><dd class="col-sm-8">{{ sub.kernel|default:"-" }}</dd>
+      </dl>
+    </div></div>
+
+{% include "review/_survey_devices.html" %}
+
+    <div class="card"><div class="card-body">
+      <h2 class="h6">Reported inventory</h2>
+      <p class="text-secondary small">
+        The payload exactly as submitted. This is what to read before accepting a
+        submission that looks implausible.
+      </p>
+      <details>
+        <summary class="small text-secondary mb-2">inventory (verbatim)</summary>
+        <pre class="small mb-0" style="max-height: 26rem; overflow: auto;">{{ inventory_json }}</pre>
+      </details>
+    </div></div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h6">Provenance</h2>
+      <dl class="row mb-0 small">
+        <dt class="col-sm-5">Submitted by</dt>
+        <dd class="col-sm-7">{{ sub.submitter|default:"(anonymous)" }}</dd>
+        <dt class="col-sm-5">Origin</dt><dd class="col-sm-7">{{ sub.get_origin_display }}</dd>
+        <dt class="col-sm-5">Trust tier</dt><dd class="col-sm-7">{{ sub.get_trust_tier_display }}</dd>
+        <dt class="col-sm-5">Token</dt>
+        <dd class="col-sm-7">{% if sub.token %}{{ sub.token.name }}{% else %}<span class="text-secondary">none</span>{% endif %}</dd>
+        <dt class="col-sm-5">Source IP</dt>
+        <dd class="col-sm-7"><code class="small">{{ sub.source_ip_hash|truncatechars:14|default:"-" }}</code>
+          <span class="text-secondary">(hashed)</span></dd>
+        <dt class="col-sm-5">Record</dt><dd class="col-sm-7"><code class="small">{{ sub.uuid }}</code></dd>
+        {% if sub.reviewed_by %}
+          <dt class="col-sm-5">Reviewed by</dt>
+          <dd class="col-sm-7">{{ sub.reviewed_by }} <span class="text-secondary">{{ sub.reviewed_at|date:"Y-m-d H:i" }}</span></dd>
+        {% endif %}
+      </dl>
+    </div></div>
+
+    {% comment %}Identity is the access-controlled tier - never public, but a reviewer
+       moderating for spam and duplicates is exactly who needs it.{% endcomment %}
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h6">Identity</h2>
+      <p class="mb-2 small">
+        {% if siblings %}
+          <span class="badge text-bg-warning">{{ siblings }} other submission{{ siblings|pluralize }} from this machine</span>
+        {% else %}
+          <span class="badge text-bg-secondary">first submission from this machine</span>
+        {% endif %}
+      </p>
+      <dl class="row mb-0 small">
+        <dt class="col-sm-5">Keyed on</dt>
+        <dd class="col-sm-7">{% if sub.identity_source %}{{ sub.identity_source }}{% else %}<span class="text-danger">none usable</span>{% endif %}</dd>
+        <dt class="col-sm-5">Identity hash</dt>
+        <dd class="col-sm-7"><code class="small">{{ sub.identity_hash|truncatechars:18|default:"-" }}</code></dd>
+        <dt class="col-sm-5">SMBIOS UUID</dt><dd class="col-sm-7"><code class="small">{{ sub.system_uuid|default:"-" }}</code></dd>
+        <dt class="col-sm-5">System serial</dt><dd class="col-sm-7"><code class="small">{{ sub.system_serial|default:"-" }}</code></dd>
+        <dt class="col-sm-5">Board serial</dt><dd class="col-sm-7"><code class="small">{{ sub.board_serial|default:"-" }}</code></dd>
+        <dt class="col-sm-5">machine-id</dt><dd class="col-sm-7"><code class="small">{{ sub.machine_id|default:"-" }}</code></dd>
+      </dl>
+    </div></div>
+
+    <div class="card"><div class="card-body">
+      <h2 class="h6">Decision</h2>
+      <p class="text-secondary small">
+        A submission counts toward the statistics while it is new or accepted.
+        Only dismissing removes it.
+      </p>
+      <form method="post" action="{% url 'review:survey_submission_accept' sub.pk %}" class="d-inline">
+        {% csrf_token %}<button class="btn btn-sm btn-success">Accept</button>
+      </form>
+      <form method="post" action="{% url 'review:survey_submission_dismiss' sub.pk %}" class="d-inline">
+        {% csrf_token %}<button class="btn btn-sm btn-outline-danger">Dismiss (exclude)</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

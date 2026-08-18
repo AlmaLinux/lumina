@@ -1,0 +1,11 @@
+[Unit]
+Description=Recompute Lumina survey aggregates (SurveyStat) from submissions
+After=network.target
+
+[Service]
+Type=oneshot
+User={{ lumina_user }}
+Group={{ lumina_group }}
+EnvironmentFile=/etc/lumina.env
+WorkingDirectory={{ lumina_app_dir }}
+ExecStart={{ lumina_venv }}/bin/python manage.py survey_rollup

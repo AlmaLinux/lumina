@@ -1,0 +1,63 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Account settings{% endblock %}
+{% block content %}
+
+<div class="row g-4">
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="h5 card-title mb-0">Publishing</h2>
+        <p class="card-subtitle text-secondary small mb-0 mt-1">
+          How your contributions are attributed where the public can see them.
+        </p>
+      </div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          {% with field=form.publish_anonymously %}
+            <div class="form-check mb-3">
+              {{ field }}
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <div class="form-text">{{ field.help_text }}</div>
+            </div>
+          {% endwith %}
+          {% comment %}Separate from the preference above on purpose: this one reaches runs that
+             are already published and overwrites per-run choices, so it is never implied by
+             saving the setting.{% endcomment %}
+          {% with field=form.apply_to_existing %}
+            <div class="form-check mb-3 ps-4 border-start">
+              {{ field }}
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <div class="form-text">{{ field.help_text }}</div>
+            </div>
+          {% endwith %}
+          <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-header"><h2 class="h6 card-title mb-0">What anonymous means here</h2></div>
+      <div class="card-body text-secondary small">
+        <p>
+          A run listed anonymously shows <strong>Anonymous</strong> wherever a submitter would
+          normally be named - the run page and the public API included.
+        </p>
+        <p>
+          It is not an anonymous submission. Reviewers and administrators still see your
+          account, because they have to know whose evidence they are judging, and the run is
+          still yours on your dashboard.
+        </p>
+        <p class="mb-0">
+          Any single run can be attributed or anonymized from its own page at any time,
+          including after it is published - your runs are listed on
+          <a href="{% url 'accounts:dashboard' %}">your dashboard</a>. At run time,
+          <code>--anonymous</code> does the same thing for one run.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

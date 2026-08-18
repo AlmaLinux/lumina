@@ -1,0 +1,28 @@
+{% extends "base_public.html" %}
+{% block content %}
+<div class="container py-4" style="max-width: 640px;">
+  <h1 class="h3">Long-lived survey tokens</h1>
+  <p class="text-secondary">
+    Automated and fleet surveys need a submit-scoped token that outlives the standard
+    30-day limit. Tell us why you need one and a reviewer will decide.
+  </p>
+
+  {% if grant %}
+    <div class="alert alert-success">
+      You are approved to mint long-lived survey tokens. Create one on your
+      <a href="{% url 'accounts:tokens' %}">tokens page</a> - the longer expiry options
+      are available there.
+    </div>
+  {% elif has_open_request %}
+    <div class="alert alert-info">
+      You have a {{ existing.get_status_display|lower }} request. A reviewer will follow up.
+    </div>
+  {% else %}
+    <form method="post">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button class="btn btn-primary" type="submit">Submit request</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,265 @@
+{% extends "base_public.html" %}
+{% load static %}
+{% block title %}Hardware statistics - AlmaLinux{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/lumina-charts.css' %}">{% endblock %}
+{% block content %}
+<div class="container py-4">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Hardware statistics</h1>
+      <p class="text-secondary mb-0">
+        {% if segment %}
+          {% comment %}A cohort is counted in its own right, so say which one and what it
+             is: every percentage below is a share of this cohort, not of the whole
+             fleet.{% endcomment %}
+          <strong>{{ segment.name }}</strong>{% if segment.description %}: {{ segment.description }}{% endif %}
+        {% else %}
+          The AlmaLinux hardware survey: what AlmaLinux runs on, across the bare-metal
+          fleet. Verified submissions, aggregate only.
+        {% endif %}
+      </p>
+    </div>
+
+    {% comment %}One form, two controls, no script: changing either submits. Granularity is
+       separate from period because they are different questions, and a single flat list of
+       "2026, 2026-09, 2026-08" made it impossible to see that both exist.{% endcomment %}
+    {% if periods %}
+      <form method="get" class="d-flex flex-wrap align-items-end gap-2">
+        {% if segments %}
+          <div>
+            <label class="form-label small text-secondary mb-1" for="segment">Machines</label>
+            <select name="segment" id="segment" class="form-select form-select-sm w-auto"
+                    onchange="this.form.submit()">
+              <option value="">All surveyed machines</option>
+              {% for s in segments %}
+                <option value="{{ s.slug }}" {% if segment and s.slug == segment.slug %}selected{% endif %}>{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        {% endif %}
+        {% if has_months and has_years %}
+          <div>
+            <label class="form-label small text-secondary mb-1" for="by">Group by</label>
+            <select name="by" id="by" class="form-select form-select-sm w-auto"
+                    onchange="this.form.submit()">
+              <option value="month" {% if granularity == "month" %}selected{% endif %}>Month</option>
+              <option value="year" {% if granularity == "year" %}selected{% endif %}>Year</option>
+            </select>
+          </div>
+        {% else %}
+          <input type="hidden" name="by" value="{{ granularity }}">
+        {% endif %}
+        <div>
+          <label class="form-label small text-secondary mb-1" for="period">Period</label>
+          <select name="period" id="period" class="form-select form-select-sm w-auto"
+                  onchange="this.form.submit()">
+            {% for p in periods %}
+              <option value="{{ p }}" {% if p == period %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <noscript><button class="btn btn-sm btn-primary" type="submit">Show</button></noscript>
+      </form>
+    {% endif %}
+  </div>
+
+  {% if not sections %}
+    <div class="card"><div class="card-body text-center py-5">
+      {% if segment %}
+        <h2 class="h5">No machines in this set yet</h2>
+        <p class="text-secondary mb-0">
+          Nothing has been surveyed that matches <strong>{{ segment.name }}</strong>.
+          <a href="?">Show all surveyed machines</a> instead.
+        </p>
+      {% else %}
+        <h2 class="h5">Nothing to show yet</h2>
+        <p class="text-secondary mb-0">
+          The survey publishes aggregates once submissions have been rolled up. Statistics
+          appear here as soon as there are any.
+        </p>
+      {% endif %}
+    </div></div>
+  {% else %}
+
+    {% comment %}The answers most people came for, before any chart. A single figure needs
+       no plot, and leading with four of them stops the page opening as a wall of
+       bars.{% endcomment %}
+    <div class="stat-band mb-4">
+      <div class="stat-tile stat-tile-lead">
+        <span class="stat-label">Machines surveyed</span>
+        <span class="stat-value">{{ machine_total }}</span>
+        <span class="stat-note">
+          {% if granularity == "month" %}reporting in {{ period }}{% else %}reporting during {{ period }}{% endif %}
+        </span>
+      </div>
+      {% for card in headline %}
+        <div class="stat-tile">
+          <span class="stat-label">{{ card.label }}</span>
+          <span class="stat-value stat-value-text" title="{{ card.top.label }}">{{ card.top.label }}</span>
+          <span class="stat-note">
+            {{ card.top.share|floatformat:1 }}% of machines
+            {% if card.top.has_delta and card.top.direction != "flat" %}
+              <span class="chart-change is-{{ card.top.direction }}">{% if card.top.delta > 0 %}+{% endif %}{{ card.top.delta|floatformat:1 }}</span>
+            {% endif %}
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+
+    {% comment %}Trends next: "which way is this going" is the question a single period
+       cannot answer, and it is why the page has periods at all. Always monthly, since a
+       yearly line of two points shows nothing.{% endcomment %}
+    {% if trends %}
+      <h2 class="h5 section-heading">Over time</h2>
+      <div class="row g-4 mb-5">
+        {% for trend in trends %}
+          <div class="col-lg-6">
+            <div class="card h-100"><div class="card-body">
+              <h3 class="h6 mb-1">{{ trend.label }}</h3>
+              <p class="text-secondary small mb-2">
+                Share of machines, monthly.{% if trend.has_other %} Everything outside the top
+                {{ trend.named }} is grouped as Other.{% endif %}
+              </p>
+
+              {% comment %}Server-rendered SVG: no chart library, no script, nothing to load.
+                 Coordinates come from lumina.survey.stats, which is where the arithmetic can
+                 be tested. role=img with a title, because the shape of a line is not
+                 something a screen reader can be handed; the table below carries the
+                 numbers.{% endcomment %}
+              <svg class="chart-trend" viewBox="0 0 720 220" preserveAspectRatio="xMidYMid meet"
+                   role="img" aria-labelledby="cap-{{ trend.dimension }}">
+                <title id="cap-{{ trend.dimension }}">
+                  {{ trend.label }} share by month, {{ trend.periods|first }} to {{ trend.periods|last }}
+                </title>
+                {% comment %}Every coordinate comes from the Trend: the padding lives in one
+                   place, and a literal here is what clipped the "100%" label when it
+                   moved.{% endcomment %}
+                {% for line in trend.grid %}
+                  <line class="chart-gridline"
+                        x1="{{ trend.plot_left|floatformat:1 }}" x2="{{ trend.plot_right|floatformat:1 }}"
+                        y1="{{ line.y|floatformat:1 }}" y2="{{ line.y|floatformat:1 }}"></line>
+                  <text class="chart-tick" x="{{ trend.y_label_x|floatformat:1 }}"
+                        y="{{ line.y|floatformat:1 }}"
+                        text-anchor="end" dominant-baseline="middle">{{ line.value|floatformat:0 }}%</text>
+                {% endfor %}
+                {% for tick in trend.x_ticks %}
+                  <text class="chart-tick" x="{{ tick.x|floatformat:1 }}"
+                        y="{{ trend.x_label_y|floatformat:1 }}"
+                        text-anchor="{{ tick.anchor }}">{{ tick.label }}</text>
+                {% endfor %}
+                {% for s in trend.series %}
+                  <polyline class="chart-line series-{{ s.slot }}" points="{{ s.points }}"></polyline>
+                  {% comment %}Direct labels on every series, so identity never rests on colour
+                     alone. Four series at most, which is why they all get one.{% endcomment %}
+                  <text class="chart-end-label series-{{ s.slot }}"
+                        x="{{ trend.end_label_x|floatformat:1 }}"
+                        y="{{ s.label_y|floatformat:1 }}" dominant-baseline="middle">{{ s.last|floatformat:1 }}%</text>
+                {% endfor %}
+              </svg>
+
+              <div class="chart-legend mt-2">
+                {% for s in trend.series %}
+                  <span><span class="chart-swatch swatch-{{ s.slot }}"></span>{{ s.label }}</span>
+                {% endfor %}
+              </div>
+
+              <details class="mt-2">
+                <summary class="small text-secondary">Show these numbers as a table</summary>
+                <div class="table-responsive mt-2">
+                  <table class="table table-sm table-borderless mb-0 small chart-table">
+                    <caption class="visually-hidden">
+                      {{ trend.label }} share of machines by month
+                    </caption>
+                    <thead>
+                      <tr><th scope="col">Month</th>
+                        {% for s in trend.series %}<th scope="col" class="text-end">{{ s.label }}</th>{% endfor %}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in trend.table %}
+                        <tr><th scope="row" class="fw-normal">{{ row.period }}</th>
+                          {% for cell in row.cells %}<td class="text-end">{{ cell|floatformat:1 }}%</td>{% endfor %}
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div></div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <h2 class="h5 section-heading">
+      {{ period }} in detail
+      <span class="section-heading-note">
+        {% if granularity == "month" %}machines reporting this month{% else %}machines reporting this year{% endif %}
+      </span>
+    </h2>
+    <div class="row g-4">
+      {% for section in sections %}
+        <div class="col-lg-6">
+          <div class="card h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-baseline mb-1">
+              <h3 class="h6 mb-0">{{ section.label }}</h3>
+              <span class="text-secondary small">{{ section.total }} machine{{ section.total|pluralize }}</span>
+            </div>
+            <p class="text-secondary small mb-3">
+              Share of machines{% if section.has_deltas %}<span class="chart-change-note">, and
+              the change in percentage points against the previous {{ granularity }}</span>{% endif %}.
+            </p>
+
+            <div class="chart-rows">
+              {% comment %}A grid rather than a table: each row is one bar plus three numbers,
+                 a shape a reader takes in at a glance, and a header row saying "bucket, bar,
+                 share, change, history" would be noise. The screen-reader path is the row
+                 text itself, which reads label, share, then change.{% endcomment %}
+              {% for b in section.buckets %}
+                <span class="chart-label" title="{{ b.label }}">{{ b.label }}</span>
+                <span class="chart-bar-track">
+                  {% comment %}Inline width because it is data, not style: it is this row's
+                     share and cannot live in a stylesheet.{% endcomment %}
+                  <span class="chart-bar-fill" style="width: {{ b.share|floatformat:1 }}%"></span>
+                </span>
+                <span class="chart-share">{{ b.share|floatformat:1 }}%</span>
+                <span class="chart-change is-{{ b.direction }}">
+                  {% if not b.has_delta %}<span class="visually-hidden">no previous period</span>&nbsp;
+                  {% elif b.direction == "flat" %}0.0
+                  {% else %}{% if b.delta > 0 %}+{% endif %}{{ b.delta|floatformat:1 }}{% endif %}
+                </span>
+                <span class="chart-spark-cell">
+                  {% if b.spark %}
+                    <svg class="chart-spark" viewBox="0 0 100 28" preserveAspectRatio="none"
+                         role="img" aria-label="{{ b.label }} trend">
+                      <polyline points="{{ b.spark }}"></polyline>
+                    </svg>
+                  {% endif %}
+                </span>
+              {% endfor %}
+            </div>
+
+            {% if section.truncated %}
+              <p class="text-secondary small mb-0 mt-3">
+                and {{ section.truncated }} more, each below the fifteenth most common.
+              </p>
+            {% endif %}
+          </div></div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <p class="text-secondary small mt-4 mb-0">
+      Counts are machines, deduplicated within the period, and are never summed across
+      periods: a machine reporting every month is one machine in each of those months.
+      {% if segment %}
+        Every share above is of the {{ machine_total }} machine{{ machine_total|pluralize }}
+        in this set, counted in its own right rather than sliced out of the whole-fleet
+        figures.
+      {% endif %}
+      Virtual machines are excluded. No bucket is hidden for being small.
+    </p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,88 @@
+{% extends "base_admin.html" %}
+{% block title %}Claim {{ vendor.name }} - AlmaLinux{% endblock %}
+{% block page_title %}Claim {{ vendor.name }}{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    Tell us who you are at {{ vendor.name }}. A reviewer reads this and decides;
+    there is no automated check to pass.
+  </p>
+{% endblock %}
+{% block content %}
+
+{% if is_claimed %}
+  {% comment %}Someone already holds this vendor's identity. Saying so up front
+     beats letting them fill in a form that a reviewer will only reject, and it
+     is also the honest answer if they are a second person from the same company
+     - a reviewer can add them as a member.{% endcomment %}
+  <div class="alert alert-warning" role="alert">
+    <h2 class="h5 alert-heading">Already claimed</h2>
+    <p class="mb-0">
+      Someone has already been recognised as representing {{ vendor.name }}. If
+      you also work there and need access, submit the claim anyway and say so in
+      the note - a reviewer can add you alongside them.
+    </p>
+  </div>
+{% endif %}
+
+{% include "catalog/_form_errors.html" %}
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.work_email.id_for_label }}">
+            {{ form.work_email.label }}
+          </label>
+          {{ form.work_email }}
+          <div class="form-text">
+            An address at {{ vendor.name }}'s own domain carries the most weight.
+          </div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.role_at_vendor.id_for_label }}">
+            {{ form.role_at_vendor.label }}
+          </label>
+          {{ form.role_at_vendor }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.note.id_for_label }}">
+            {{ form.note.label }}
+          </label>
+          {{ form.note }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.evidence.id_for_label }}">
+            {{ form.evidence.label }}
+          </label>
+          {{ form.evidence }}
+        </div>
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary">Submit claim</button>
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<div class="card mt-3">
+  <div class="card-body">
+    <h2 class="h6">What approving this does</h2>
+    <ul class="mb-0 small text-secondary">
+      <li>You become the owner of the {{ vendor.name }} record and can edit its profile.</li>
+      <li>
+        Every listing already attributed to {{ vendor.name }} that nobody maintains
+        becomes yours to maintain, across both the hardware and software catalogs.
+      </li>
+      <li>
+        Whether {{ vendor.name }} is also marked <strong>verified</strong> - which is
+        what allows vendor-validated certifications - is a separate decision the
+        reviewer makes at the same time.
+      </li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}

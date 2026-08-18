@@ -1,0 +1,118 @@
+/* Rules for templates rendered under **both** base layouts.
+
+   `results/_run_summary.html`, `_component_identity.html`, `_benchmark_table.html` and friends
+   are included from public pages (`base_public.html`, Tabler) and from the reviewer's pages
+   (`base_admin.html`, Bootstrap). A rule those partials depend on has to be linked by both,
+   and these two blocks were in `lumina-public.css` only - so on the review page the memory
+   toggle rendered as a bare unexplained checkbox with every module already listed, and the
+   per-component override rendered with its fields permanently open.
+
+   Reported as "there is a checkbox beside memory modules - what does that checkbox do?" The
+   answer was "nothing you can see, because the stylesheet that hides it is not loaded here."
+
+   `test_shared_partials_only_rely_on_shared_css` is what keeps this true.
+*/
+
+/* --- Memory module table -----------------------------------------------------
+   Four rows fit without crowding the page, so a machine with four or fewer
+   shows everything and offers no control at all. Past that the remainder is
+   behind one toggle: a 24-DIMM server should not push the rest of the run off
+   screen. Checkbox-and-sibling rather than JavaScript, so it works before any
+   script loads and needs no per-page wiring. */
+.dimm-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.dimm-extra { display: none; }
+.dimm-toggle:checked ~ .dimm-wrap .dimm-extra { display: table-row; }
+.dimm-more { cursor: pointer; }
+.dimm-toggle:checked ~ .dimm-more .dimm-more-text { display: none; }
+.dimm-toggle:not(:checked) ~ .dimm-more .dimm-less-text { display: none; }
+
+/* Reveal-on-request: a checkbox whose :checked state uncovers the fields it gates.
+
+   Two users, one mechanism. "This is not that machine" on the listing-details form, and
+   "Not this part? Correct it" on each matched component row. Both suggest what the catalog
+   already holds and keep the entry fields collapsed, because prefilled boxes over an existing
+   entry read as an invitation to retype it.
+
+   No JavaScript, and no way for the control and the value to disagree: the checkbox that opens
+   the fields *is* what posts. That is what went wrong when the identity override was a button
+   with its own endpoint - it had to live inside the proposal form, a nested <form> is ignored
+   by browsers, and pressing it saved the proposal with those fields absent instead of
+   disputing anything.
+
+   Order matters: input, then label, then the fields. */
+.reveal-fields,
+.reveal-toggle:checked ~ label .reveal-when-closed {
+  display: none;
+}
+.reveal-toggle:checked ~ .reveal-fields {
+  display: block;
+}
+.reveal-toggle:not(:checked) ~ label .reveal-when-open {
+  display: none;
+}
+/* Focus is otherwise invisible: the input it belongs to is clipped away. */
+.reveal-toggle:focus-visible ~ label {
+  outline: 2px solid var(--tblr-primary, #0054b0);
+  outline-offset: 2px;
+}
+
+/* Two mutually exclusive panes inside one card, with no JavaScript.
+ *
+ * Same reasoning as the disclosure controls above: this is a view preference, it has to keep
+ * working whether or not a script loaded, and the dashboard is the page a submitter opens to find
+ * out what they still owe. Bootstrap's own tabs are available on this layout, but they are inert
+ * until their bundle runs, and "the tab does nothing" is indistinguishable from "the tab is empty".
+ *
+ * One radio pair per group. Only the archived half needs a selector: checking it flips both panes
+ * and both labels, so nothing here has to know the group's name or how many groups are on a page.
+ */
+.pane-toggle {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.pane-archived {
+  display: none;
+}
+.pane-toggle-archived:checked ~ .pane-active {
+  display: none;
+}
+.pane-toggle-archived:checked ~ .pane-archived {
+  display: block;
+}
+.pane-tabs {
+  display: flex;
+  gap: 1rem;
+}
+.pane-tab {
+  cursor: pointer;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid transparent;
+  color: var(--tblr-secondary, #6c757d);
+}
+.pane-tab-active {
+  font-weight: 600;
+  color: inherit;
+  border-bottom-color: var(--tblr-primary, #0054b0);
+}
+/* Reach the tabs through the sibling .card-header they sit in, not as a direct sibling: the panes
+ * below are direct siblings of the toggles (so they switch), but the tab labels are nested in the
+ * header. Targeting ``~ .pane-tabs`` matched nothing, so the highlight stayed on Active while the
+ * archived pane showed. Keep the .card-header hop. */
+.pane-toggle-archived:checked ~ .card-header .pane-tab-active {
+  font-weight: 400;
+  color: var(--tblr-secondary, #6c757d);
+  border-bottom-color: transparent;
+}
+.pane-toggle-archived:checked ~ .card-header .pane-tab-archived {
+  font-weight: 600;
+  color: inherit;
+  border-bottom-color: var(--tblr-primary, #0054b0);
+}
+/* Focus is otherwise invisible: the radio it belongs to is clipped away. */
+.pane-toggle:focus-visible ~ .card-header .pane-tab {
+  outline: 2px solid var(--tblr-primary, #0054b0);
+  outline-offset: 2px;
+}

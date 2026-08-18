@@ -1,0 +1,207 @@
+name: Deploy dev (run)
+
+# The deploy itself. Called by the two workflows that decide *when* and *how*, and never triggered
+# directly, so there is exactly one implementation of "put this ref on the dev box".
+#
+# The split exists so that wiping the database cannot happen by accident. ``reset`` is an input here
+# because the play needs it, but the workflow that runs on every merge has no way to set it: that
+# input does not exist in deploy-dev.yml at all. A destructive deploy has to come through
+# deploy-dev-reset.yml, which asks you to type a confirmation.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        type: string
+        required: true
+      seed:
+        description: Run seed_devstack after deploying
+        type: boolean
+        required: false
+        default: false
+      reset:
+        description: Drop the database before deploying. Destroys all data on the dev host
+        type: boolean
+        required: false
+        default: false
+      retry_certbot:
+        description: >-
+          Ignore the certbot back-off and ask Let's Encrypt again on this run. After a failed attempt
+          the play leaves a marker and skips certbot for an hour, so a retry inside that hour
+          otherwise does nothing and looks like the deploy ignoring you
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Shared by every caller, so a reset and an ordinary deploy can never run against the host at the
+    # same time and fight over dnf. Not cancel-in-progress: interrupting a half-applied deploy leaves
+    # the box in a state nobody chose.
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+
+    environment:
+      name: dev
+      url: ${{ vars.DEV_URL }}
+
+    steps:
+      # Only for the playbook and the role. The application itself is cloned on the host by the role,
+      # straight from the repository at the ref below.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Ansible
+        run: |
+          pip install 'ansible-core>=2.16'
+          # -p to the path ansible.cfg names, so the deploy runs the pinned collections rather than
+          # whatever the runner image happens to ship.
+          ansible-galaxy collection install -r ansible/requirements.yml -p ansible/collections
+
+      # Written to a file rather than passed through an agent so the run is reproducible from the
+      # logs, and StrictHostKeyChecking stays on: the host key comes from a secret, so a machine
+      # answering on that address with a different key fails the deploy instead of receiving it.
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 0600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0644 ~/.ssh/known_hosts
+          test -s ~/.ssh/deploy_key || { echo "::error::DEV_SSH_KEY is empty"; exit 1; }
+          test -s ~/.ssh/known_hosts || {
+            echo "::error::DEV_KNOWN_HOSTS is empty. Get it with:  ssh-keyscan -H <host>"
+            exit 1
+          }
+
+      # Generated here rather than committed, so the hostname is configuration rather than source.
+      - name: Write the inventory
+        env:
+          DEV_HOST: ${{ secrets.DEV_SSH_HOST }}
+          DEV_USER: ${{ secrets.DEV_SSH_USER }}
+        run: |
+          test -n "$DEV_HOST" || { echo "::error::DEV_SSH_HOST is not set"; exit 1; }
+          cat > ansible/inventory/dev.yml <<EOF
+          lumina_dev:
+            hosts:
+              lumina-dev:
+                ansible_host: ${DEV_HOST}
+                ansible_user: ${DEV_USER:-deploy}
+                ansible_ssh_private_key_file: ${HOME}/.ssh/deploy_key
+          EOF
+          ansible-inventory -i ansible/inventory/dev.yml --list >/dev/null
+
+      - name: Say what this run will do
+        env:
+          REF: ${{ inputs.ref }}
+          SEED: ${{ inputs.seed }}
+          RESET: ${{ inputs.reset }}
+        run: |
+          echo "ref:   $REF"
+          echo "seed:  $SEED"
+          echo "reset: $RESET"
+          echo "tls:   on, self-signed now${{ vars.DEV_CERTBOT_EMAIL && ', certbot attempted for a real one' || ' (set DEV_CERTBOT_EMAIL for a real certificate)' }}"
+          echo "login: ${{ vars.DEV_OIDC_ISSUER && 'Keycloak OIDC' || 'seeded password form (set DEV_OIDC_ISSUER for Keycloak)' }}"
+          if [ "${{ inputs.retry_certbot }}" = "true" ]; then
+            echo "certbot: back-off ignored, asking again on this run"
+          fi
+          if [ "$RESET" = "true" ]; then
+            echo "::warning::This deploy DROPS the dev database and reseeds it."
+          fi
+
+      - name: Deploy
+        working-directory: ansible
+        env:
+          ANSIBLE_FORCE_COLOR: "1"
+          DEPLOY_REF: ${{ inputs.ref }}
+          # A reset seeds regardless of the seed input: a dropped database with no accounts in it is
+          # not a dev environment, and the play migrates before seeding for the same reason.
+          SEED: ${{ inputs.seed || inputs.reset }}
+          RESET: ${{ inputs.reset }}
+          RETRY_CERTBOT: ${{ inputs.retry_certbot }}
+          # Through the environment, not interpolated into the command below. GitHub masks a
+          # registered secret in the log, but the run script is rendered before that and a secret
+          # belongs in neither place; ansible reads it from here by name instead.
+          OIDC_CLIENT_SECRET: ${{ secrets.DEV_OIDC_CLIENT_SECRET }}
+          # Same treatment as the OIDC secret: ansible reads it from the environment, and it is
+          # never interpolated into the command below.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          ansible-playbook playbooks/dev.yml \
+            -e "lumina_version=${DEPLOY_REF}" \
+            -e "lumina_dev_seed=${SEED}" \
+            -e "lumina_dev_reset=${RESET}" \
+            ${{ vars.DEV_HOSTNAME && format('-e "lumina_dev_hostname={0}"', vars.DEV_HOSTNAME) || '' }} \
+            ${{ vars.DEV_CERTBOT_EMAIL && format('-e "lumina_dev_certbot_email={0}"', vars.DEV_CERTBOT_EMAIL) || '' }} \
+            ${{ vars.DEV_CERTBOT_STAGING == 'true' && '-e lumina_dev_certbot_staging=true' || '' }} \
+            ${{ inputs.retry_certbot && '-e lumina_certbot_retry_after=0' || '' }} \
+            ${{ vars.DEV_OIDC_ISSUER && format('-e "lumina_dev_oidc_issuer={0}"', vars.DEV_OIDC_ISSUER) || '' }} \
+            ${{ vars.DEV_OIDC_CLIENT_ID && format('-e "lumina_dev_oidc_client_id={0}"', vars.DEV_OIDC_CLIENT_ID) || '' }} \
+            ${{ vars.DEV_OIDC_ISSUER && '-e lumina_dev_oidc_client_secret="$OIDC_CLIENT_SECRET"' || '' }} \
+            ${{ secrets.SENTRY_DSN != '' && '-e lumina_dev_sentry_dsn="$SENTRY_DSN"' || '' }} \
+            ${{ vars.SENTRY_ENVIRONMENT && format('-e "lumina_dev_sentry_environment={0}"', vars.SENTRY_ENVIRONMENT) || '' }}
+
+      # The play already waits for a 200 from the host's own nginx. This asks from outside, which is
+      # the question a person actually has, and it catches a firewall or a security group that the
+      # loopback check cannot see.
+      - name: Check the site answers from outside
+        if: vars.DEV_URL != ''
+        env:
+          DEV_URL: ${{ vars.DEV_URL }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            # No ``|| echo 000``: curl -w already prints 000 when it cannot connect, so the fallback
+            # concatenated onto it and the log read "attempt 1: 000000".
+            # -k on purpose: the dev host serves a self-signed certificate, so certificate trust is
+            # the one thing this check is not asserting. Everything else it covers - DNS, the
+            # firewall, nginx, gunicorn, Django - is what it is for.
+            code=$(curl -sSk -o /dev/null -w '%{http_code}' --max-time 20 "$DEV_URL") || true
+            [ "$code" = "200" ] && { echo "$DEV_URL -> $code"; exit 0; }
+            echo "attempt $attempt: ${code:-000}"
+            sleep 5
+          done
+          echo "::error::$DEV_URL did not answer 200 (last code ${code:-000})"
+          echo "::error::The deploy itself passed its own checks on the host, so this is the path in" \
+               "between: DNS for the name in DEV_URL, a security group or firewall in front of the" \
+               "box, or DEV_URL naming a scheme the host is not serving. The host serves both 80 and" \
+               "443 (443 with a self-signed certificate, which -k above accepts)."
+          exit 1
+
+      - name: Summary
+        if: always()
+        env:
+          REF: ${{ inputs.ref }}
+          SEED: ${{ inputs.seed }}
+          RESET: ${{ inputs.reset }}
+          URL: ${{ vars.DEV_URL }}
+        run: |
+          {
+            echo "### Dev deploy"
+            echo
+            echo "- ref: \`${REF}\`"
+            echo "- url: ${URL:-_not set_}"
+            echo "- seeded: ${SEED}"
+            echo "- tls: ${{ vars.DEV_CERTBOT_EMAIL && 'self-signed at once, certbot asked for a real certificate' || '**self-signed only.** `DEV_CERTBOT_EMAIL` is not set, so certbot is switched off and not installed' }}"
+            echo "- database reset: ${RESET}"
+            echo "- result: ${{ job.status }}"
+            if [ "${RESET}" = "true" ]; then
+              echo
+              echo "Account passwords are in \`/etc/lumina-dev-accounts.env\` on the host."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

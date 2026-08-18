@@ -1,0 +1,91 @@
+{% extends "base_public.html" %}
+{% block title %}Overall scores - AlmaLinux{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'benchmarks:index' %}">Benchmarks</a></li>
+  <li class="breadcrumb-item active">Overall scores</li>
+</ol>
+
+<div class="page-header">
+  <h1 class="page-title">Overall scores</h1>
+  <div class="text-secondary">
+    A single relative Mark per model, combining every comparable benchmark. A machine in the middle
+    of the field scores about 1000, and twice the Mark means roughly twice the measured throughput.
+    Scores are relative to the results collected so far, so they shift as the field grows.
+  </div>
+</div>
+
+<ul class="nav nav-tabs mt-3">
+  <li class="nav-item"><a class="nav-link {% if kind == 'cpu' %}active{% endif %}" href="?kind=cpu">CPUs</a></li>
+  <li class="nav-item"><a class="nav-link {% if kind == 'gpu' %}active{% endif %}" href="?kind=gpu">GPUs</a></li>
+</ul>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th class="w-1">#</th>
+          {% if kind == 'cpu' %}<th>CPU</th><th>Sockets</th>{% else %}<th>GPU</th>{% endif %}
+          <th class="text-end">
+            <a class="text-reset text-decoration-none" href="?kind={{ kind }}&amp;sort=overall&amp;dir={{ header.overall.dir }}">Overall {{ header.overall.arrow }}</a>
+          </th>
+          {% if kind == 'cpu' %}
+            <th class="text-end">
+              <a class="text-reset text-decoration-none" href="?kind={{ kind }}&amp;sort=single&amp;dir={{ header.single.dir }}">Single-core {{ header.single.arrow }}</a>
+            </th>
+            <th class="text-end">
+              <a class="text-reset text-decoration-none" href="?kind={{ kind }}&amp;sort=multi&amp;dir={{ header.multi.dir }}">Multi-core {{ header.multi.arrow }}</a>
+            </th>
+          {% endif %}
+          <th class="text-end text-secondary">Runs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in page %}
+          <tr>
+            <td class="text-secondary">{{ page.start_index|add:forloop.counter0 }}</td>
+            {% if kind == 'cpu' %}
+              <td>{{ entry.model }}</td>
+              <td>{% if entry.sockets %}{{ entry.sockets }}{% else %}<span class="text-secondary">-</span>{% endif %}</td>
+            {% else %}
+              <td>{{ entry.model }}</td>
+            {% endif %}
+            <td class="text-end"><strong>{{ entry.overall }}</strong></td>
+            {% if kind == 'cpu' %}
+              <td class="text-end">{{ entry.single|default:"-" }}</td>
+              <td class="text-end">{{ entry.multi|default:"-" }}</td>
+            {% endif %}
+            <td class="text-end text-secondary">{{ entry.runs }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="{% if kind == 'cpu' %}7{% else %}4{% endif %}" class="text-secondary">No results yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if page.paginator.num_pages > 1 %}
+  <nav class="mt-3">
+    <ul class="pagination">
+      {% if page.has_previous %}
+        <li class="page-item"><a class="page-link" href="?kind={{ kind }}&amp;sort={{ sort }}&amp;dir={{ dir }}&amp;page={{ page.previous_page_number }}">Previous</a></li>
+      {% endif %}
+      <li class="page-item disabled"><span class="page-link">Page {{ page.number }} of {{ page.paginator.num_pages }}</span></li>
+      {% if page.has_next %}
+        <li class="page-item"><a class="page-link" href="?kind={{ kind }}&amp;sort={{ sort }}&amp;dir={{ dir }}&amp;page={{ page.next_page_number }}">Next</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+{% endif %}
+
+<p class="text-secondary small mt-3">
+  The overall CPU Mark folds in single-core, multi-core, compression, crypto, and compilation; the
+  GPU Mark folds in the portable compute and memory figures. Each is a geometric mean, so no single
+  metric can dominate. A dual-socket board and a single-socket one of the same CPU are separate rows.
+  Per-benchmark leaderboards are on the <a href="{% url 'benchmarks:index' %}">benchmarks index</a>.
+</p>
+
+{% endblock %}

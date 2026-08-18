@@ -1,0 +1,862 @@
+---
+- name: Install system packages
+  ansible.builtin.dnf:
+    name:
+      - python3.12
+      - python3.12-devel
+      # Ansible's own pip module imports ``packaging`` on the target to compare versions, so without
+      # this the next task fails with "Failed to import the required Python library (packaging)" on
+      # any host where nothing else has pulled it in. Found by running this role against a fresh
+      # AlmaLinux 10 machine rather than one that had been used for something else first.
+      - python3-packaging
+      - gcc
+      - git
+      - nginx
+      - mariadb-connector-c-devel
+      - pkgconf-pkg-config
+      - policycoreutils-python-utils
+    state: present
+
+- name: Create system user
+  ansible.builtin.user:
+    name: "{{ lumina_user }}"
+    system: true
+    home: "{{ lumina_home }}"
+    shell: /sbin/nologin
+    create_home: true
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ lumina_user }}"
+    group: "{{ lumina_group }}"
+    mode: "0755"
+  loop:
+    - "{{ lumina_app_dir }}"
+    - "{{ lumina_media_root }}"
+    - "{{ lumina_static_root }}"
+    - "{{ lumina_log_dir }}"
+    - /run/lumina
+
+- name: Ensure the whole media tree is owned by the app user
+  # The app creates subdirectories under here at runtime - vendor logos, run bundles - and the
+  # directory task above only fixes the media root itself, not what is already inside it. An older
+  # deploy that created a subdirectory as root (e.g. a management command run before become_user was
+  # set) leaves the app unable to write into it, and the next upload fails with EACCES - a vendor
+  # logo upload 500'd exactly this way (/var/lib/lumina/media/vendor-logos/proposals). Recurse so a
+  # drifted box self-heals. Owner/group only, no mode, so file permissions are left as they are.
+  ansible.builtin.file:
+    path: "{{ lumina_media_root }}"
+    state: directory
+    owner: "{{ lumina_user }}"
+    group: "{{ lumina_group }}"
+    recurse: true
+
+- name: Clone application repository
+  ansible.builtin.git:
+    repo: "{{ lumina_repo }}"
+    dest: "{{ lumina_app_dir }}"
+    version: "{{ lumina_version }}"
+    force: true
+  become: true
+  become_user: "{{ lumina_user }}"
+  notify:
+    - Migrate lumina
+    - Collectstatic lumina
+    - Restart lumina
+
+- name: Create Python virtualenv and install app
+  ansible.builtin.pip:
+    # ``editable`` rather than folding -e into the name: a name of "-e /opt/lumina/app" reaches pip as
+    # one argument and is rejected with "not a valid editable requirement". Editable on purpose, so
+    # the clone above is what runs and a code change needs no reinstall to take effect.
+    name: "{{ lumina_app_dir }}"
+    editable: true
+    virtualenv: "{{ lumina_venv }}"
+    virtualenv_command: /usr/bin/python3.12 -m venv
+  become: true
+  become_user: "{{ lumina_user }}"
+  # Deliberately notifies nothing. An editable install from a path is never idempotent - pip reruns
+  # and the module reports changed every time - so notifying from here migrated, re-collected static,
+  # and restarted the service on every deploy, including deploys that changed nothing at all. The
+  # clone above is the honest signal for "the code moved", and it cannot be missed: a dependency
+  # change is a commit too.
+
+- name: Render environment file
+  ansible.builtin.template:
+    src: lumina.env.j2
+    dest: /etc/lumina.env
+    owner: root
+    group: "{{ lumina_group }}"
+    # 0640 so the service user can read but other local users can't.
+    mode: "0640"
+  notify: Restart lumina
+
+- name: Install gunicorn systemd unit
+  ansible.builtin.template:
+    src: lumina.service.j2
+    dest: /etc/systemd/system/lumina.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart lumina
+
+- name: Install results maintenance timers (embargo publish, bundle pruning)
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - lumina-publish-embargoed.service
+    - lumina-publish-embargoed.timer
+    - lumina-prune-bundles.service
+    - lumina-prune-bundles.timer
+    - lumina-deliver-notifications.service
+    - lumina-deliver-notifications.timer
+    - lumina-survey-rollup.service
+    - lumina-survey-rollup.timer
+  notify:
+    - Reload systemd
+
+- name: Enable results maintenance timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - lumina-publish-embargoed.timer
+    - lumina-prune-bundles.timer
+    - lumina-deliver-notifications.timer
+    - lumina-survey-rollup.timer
+
+- name: Install tmpfiles.d entry for runtime socket dir
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/lumina.conf
+    content: "d /run/lumina 0755 {{ lumina_user }} {{ lumina_group }} -\n"
+    mode: "0644"
+
+- name: Work out whether certbot can be tried at all
+  ansible.builtin.set_fact:
+    lumina_certbot_possible: >-
+      {{ (lumina_certbot | bool)
+         and (lumina_tls_enabled | bool)
+         and (lumina_certbot_email | length > 0)
+         and lumina_tls_cert_name != '_'
+         and '.' in lumina_tls_cert_name }}
+
+# Two dnf transactions, not one: certbot lives in EPEL, and dnf resolves a package list against the
+# repos configured when the transaction starts, so asking for epel-release and certbot together fails
+# with "No package certbot available".
+- name: Enable EPEL, which carries certbot
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+  when: lumina_certbot_possible | bool
+
+- name: Install certbot
+  ansible.builtin.dnf:
+    # The nginx plugin is deliberately absent: this role renders the vhost itself, and a plugin
+    # rewriting it would fight the template on every renewal.
+    name: certbot
+    state: present
+  when: lumina_certbot_possible | bool
+
+- name: Create the ACME challenge webroot
+  ansible.builtin.file:
+    path: "{{ lumina_acme_webroot }}/.well-known/acme-challenge"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: lumina_certbot_possible | bool
+
+- name: Create certbot's deploy hooks directory
+  ansible.builtin.file:
+    path: "{{ lumina_letsencrypt_dir }}/renewal-hooks/deploy"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: lumina_certbot_possible | bool
+
+# A hook here rather than --deploy-hook on the request, and the difference is the whole point: this one
+# runs for every lineage on the host, including certificates this role did not obtain. --deploy-hook is
+# recorded in the renewal config of the one lineage certbot was creating at the time, so a certificate
+# somebody got by hand renews in sixty days with nothing to tell nginx, and the role cannot fix that
+# afterwards because a real certificate is exactly the state in which it stops running certbot.
+- name: Make sure a renewal reloads nginx, whoever obtained the certificate
+  ansible.builtin.copy:
+    dest: "{{ lumina_letsencrypt_dir }}/renewal-hooks/deploy/reload-nginx.sh"
+    content: |
+      #!/bin/sh
+      # Installed by the lumina Ansible role. certbot runs every executable in this directory after
+      # any successful renewal, so nginx picks up a new certificate without anybody remembering to.
+      # Reload rather than restart: no dropped connections, and nginx rereads the certificate files.
+      systemctl reload nginx
+    owner: root
+    group: root
+    mode: "0755"
+  when: lumina_certbot_possible | bool
+
+# TLS material, before the vhost that has to point at it.
+#
+# The order matters and is the whole design: generate a self-signed certificate first so nginx always
+# has something to serve, then prefer the Let's Encrypt one if it is already there. certbot itself runs
+# later, after nginx is up, because http-01 needs port 80 answering.
+- name: Install openssl, to generate a certificate and to read the one already there
+  ansible.builtin.dnf:
+    name: openssl
+    state: present
+  when:
+    - lumina_tls_enabled | bool
+    # Also for certbot alone: deciding whether the certificate on disk is the real thing means
+    # reading it, which is the whole of the rule below.
+    - (lumina_tls_selfsigned | bool) or (lumina_certbot | bool)
+
+# A certificate is only usable with its key, so the pair is what gets checked, not the certificate.
+# ``creates:`` on the certificate alone treated a certificate with no key as done, and the next task
+# then failed on the missing key: an unreachable state to get into, but a permanent one once in it,
+# failing every deploy from then on. Reached by a hand-cleaned /etc/pki/tls/private, a restore that
+# skipped it, or openssl being killed between writing the two files.
+- name: Look for the self-signed pair
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+  register: lumina_selfsigned_stat
+  loop:
+    - "{{ lumina_tls_selfsigned_cert }}"
+    - "{{ lumina_tls_selfsigned_key }}"
+  when:
+    - lumina_tls_enabled | bool
+    - lumina_tls_selfsigned | bool
+
+- name: Generate a self-signed certificate
+  ansible.builtin.command:
+    # subjectAltName as well as the CN: current clients ignore the CN entirely and reject a certificate
+    # with no SAN rather than merely distrusting it.
+    cmd: >-
+      openssl req -x509 -newkey rsa:2048 -nodes
+      -days {{ lumina_tls_selfsigned_days }}
+      -keyout {{ lumina_tls_selfsigned_key }}
+      -out {{ lumina_tls_selfsigned_cert }}
+      -subj "/CN={{ lumina_tls_cert_name }}"
+      -addext "subjectAltName=DNS:{{ lumina_tls_cert_name }}"
+  # Not regenerated when the pair is already there: this is the fallback, and replacing it on every
+  # deploy would change the certificate under anybody who had accepted it. Regenerated when either
+  # half is missing, because half a pair serves nobody.
+  when:
+    - lumina_tls_enabled | bool
+    - lumina_tls_selfsigned | bool
+    - not (lumina_selfsigned_stat.results | map(attribute='stat.exists') | select | list | length == 2)
+  changed_when: true
+  notify: Reload nginx
+
+- name: Keep the private key private
+  ansible.builtin.file:
+    path: "{{ lumina_tls_selfsigned_key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - lumina_tls_enabled | bool
+    - lumina_tls_selfsigned | bool
+
+# ``follow: true`` is not a detail. /etc/letsencrypt/live/<name>/fullchain.pem is a symlink into
+# ../../archive/, and an lstat reports a dangling one as present: an archive pruned by hand, or a
+# host restored from a backup that skipped it, would leave nginx pointed at a path that does not
+# resolve - failing every reload from then on - while certbot stayed skipped because a certificate
+# was "already there".
+- name: Look for a Let's Encrypt certificate
+  ansible.builtin.stat:
+    path: "{{ lumina_tls_le_cert }}"
+    follow: true
+  register: lumina_le_stat
+  when: lumina_tls_enabled | bool
+
+# The key as well as the certificate. nginx needs both, and a lineage holding a perfectly good
+# fullchain.pem with no privkey.pem beside it fails `nginx -t` with "cannot load certificate key":
+# checking only the certificate pointed the vhost at that pair and, because the certificate was real,
+# also told certbot there was nothing to do. A restore excluding private keys gets you there.
+- name: Look for its private key
+  ansible.builtin.stat:
+    path: "{{ lumina_tls_le_key }}"
+    follow: true
+  register: lumina_le_key_stat
+  when: lumina_tls_enabled | bool
+
+# A certbot lineage is /etc/letsencrypt/renewal/<name>.conf, not the files under live/. That
+# distinction is the whole of what went wrong before: certbot can only renew in place when it can
+# *load* the lineage, and both halves of that can fail independently of whether a certificate is
+# sitting at the path this role reads.
+- name: Look for the certbot lineage behind it
+  ansible.builtin.stat:
+    path: "{{ lumina_tls_le_renewal }}"
+  register: lumina_le_renewal_stat
+  when: lumina_tls_enabled | bool
+
+# All four, because certbot's own storage check refuses a lineage with any one of them dangling, and
+# that refusal is what makes it take the new-request branch and write <name>-0001 beside the name it
+# was given.
+- name: Check that the lineage's links all resolve
+  ansible.builtin.stat:
+    path: "{{ lumina_tls_le_dir }}/{{ item }}.pem"
+    follow: true
+  register: lumina_le_links_stat
+  loop: [cert, privkey, chain, fullchain]
+  when:
+    - lumina_tls_enabled | bool
+    - lumina_le_renewal_stat.stat.exists | default(false)
+
+# The question is not whether a file is there. It is whether the file is a certificate a browser will
+# trust, because that is the thing certbot was asked to get, and a certificate that is not that must
+# not be mistaken for one that is.
+- name: Read the certificate that is already there
+  ansible.builtin.command:
+    # One invocation for three answers: does it parse, whose is it, and has it expired. -checkend
+    # supplies the exit code (0 = parses and still valid, 1 = expired or unreadable) while the
+    # distinguished names still print, so the stdout is usable either way.
+    cmd: >-
+      openssl x509 -in {{ lumina_tls_le_cert | quote }} -noout -issuer -subject -checkend 0
+  register: lumina_le_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - lumina_tls_enabled | bool
+    - lumina_le_stat.stat.exists | default(false)
+
+# Set unconditionally, with defaults that read as "there is nothing there", so that every later
+# condition can be written plainly instead of guarding against an undefined fact.
+- name: Work out what that certificate is
+  ansible.builtin.set_fact:
+    # Usable: it parses, has not expired, and its key is there. This is what nginx may be pointed at;
+    # an expired file, an unreadable one, or a certificate whose key is missing is worse than the
+    # self-signed fallback, not better.
+    lumina_tls_le_usable: >-
+      {{ (lumina_le_probe.rc | default(1)) == 0
+         and (lumina_le_key_stat.stat.exists | default(false)) }}
+    # Self-signed: issuer and subject are the same name. Both are printed by the same openssl in the
+    # same format in the same run, so comparing the strings is exact rather than approximate.
+    lumina_tls_le_selfsigned: >-
+      {{ (lumina_le_probe.stdout_lines | default([]) | select('match', '^issuer=') | first
+          | default('issuer=?') | regex_replace('^issuer=', ''))
+         == (lumina_le_probe.stdout_lines | default([]) | select('match', '^subject=') | first
+             | default('subject=!') | regex_replace('^subject=', '')) }}
+    # Let's Encrypt prefixes the name of every staging CA with "(STAGING)", so a trial certificate
+    # can be recognised from the file without asking the ACME server anything.
+    lumina_tls_le_staging: "{{ '(STAGING)' in (lumina_le_probe.stdout | default('')) }}"
+    # Who issued it, for the log line further down. A fact rather than the same expression written
+    # out a second time there, and the reason is not only repetition: a folded YAML scalar keeps the
+    # newline around any line indented more than the block, so an expression long enough to wrap put
+    # a line break in the middle of the sentence.
+    lumina_tls_le_issuer: >-
+      {{ (lumina_le_probe.stdout_lines | default([]) | select('match', '^issuer=') | first
+      | default('issuer=an unknown authority')) | regex_replace('^issuer=', '') }}
+
+- name: Decide whether that certificate is the one certbot was asked for
+  ansible.builtin.set_fact:
+    # The only state that may suppress a certbot request. Every other one - nothing there, a
+    # self-signed certificate, a staging certificate once staging is off, an expired or unreadable
+    # file - is a reason to ask, not a reason not to. Keyed on what the certificate *is* rather than
+    # on a path existing, because "a certificate is already installed" and "we already have the
+    # certificate we wanted" are different facts and only the second one should stop us.
+    lumina_tls_le_real: >-
+      {{ (lumina_tls_le_usable | bool)
+         and not (lumina_tls_le_selfsigned | bool)
+         and not ((lumina_tls_le_staging | bool) and not (lumina_certbot_staging | bool)) }}
+    # Names the state in the one log line somebody reads when a deploy did not do what they expected.
+    # Here rather than beside the facts it reads, because a set_fact task cannot depend on the order
+    # its own keys are resolved in: written there it failed with lumina_tls_le_selfsigned undefined.
+    lumina_tls_le_description: >-
+      {{ 'self-signed' if lumina_tls_le_selfsigned | bool
+      else ("a Let's Encrypt staging certificate" if lumina_tls_le_staging | bool
+      else ('missing its private key' if (lumina_le_probe.rc | default(1)) == 0
+      else 'expired or unreadable')) }}
+    # Loadable: certbot can renew this lineage in place, which is the only state --force-renewal is
+    # for. It needs the renewal config *and* every one of the four links to resolve, because certbot
+    # refuses a lineage with any of them dangling, and that refusal is not an error: it falls through
+    # to issuing a new certificate under a name it picks itself.
+    lumina_tls_le_loadable: >-
+      {{ (lumina_le_renewal_stat.stat.exists | default(false))
+         and ((lumina_le_links_stat.results | default([])
+               | map(attribute='stat.exists') | select | list | length) == 4) }}
+    # Occupied by something certbot cannot use: files at its path with no loadable lineage behind
+    # them. certbot will not write into that directory, and it finds out only after the certificate has
+    # been issued, so the issuance is spent and thrown away. It has to be cleared first.
+    lumina_tls_le_obstructed: >-
+      {{ ((lumina_le_stat.stat.exists | default(false))
+          or (lumina_le_renewal_stat.stat.exists | default(false)))
+         and not ((lumina_le_renewal_stat.stat.exists | default(false))
+                  and ((lumina_le_links_stat.results | default([])
+                        | map(attribute='stat.exists') | select | list | length) == 4)) }}
+
+- name: Serve the certbot certificate if it is usable, the self-signed one otherwise
+  ansible.builtin.set_fact:
+    lumina_tls_cert: >-
+      {{ (lumina_tls_le_usable | bool)
+         | ternary(lumina_tls_le_cert, lumina_tls_selfsigned_cert) }}
+    lumina_tls_key: >-
+      {{ (lumina_tls_le_usable | bool)
+         | ternary(lumina_tls_le_key, lumina_tls_selfsigned_key) }}
+  when:
+    - lumina_tls_enabled | bool
+    - (lumina_tls_selfsigned | bool) or (lumina_certbot | bool)
+
+- name: Check whether the certificate to be served exists
+  ansible.builtin.stat:
+    path: "{{ lumina_tls_cert }}"
+    # Same reason as above: a vhost pointed at a dangling symlink is a reload that fails, so a
+    # dangling symlink has to read as no certificate at all.
+    follow: true
+  register: lumina_cert_stat
+  when: lumina_tls_enabled | bool
+
+- name: Decide whether this pass can serve TLS
+  ansible.builtin.set_fact:
+    lumina_tls_effective: >-
+      {{ (lumina_tls_enabled | bool)
+         and (lumina_cert_stat.stat.exists | default(false)) }}
+
+- name: Refuse to serve plain HTTP when TLS was asked for and nothing will provide a certificate
+  ansible.builtin.assert:
+    that: lumina_tls_effective | bool
+    fail_msg: >-
+      lumina_tls_enabled is true and there is no certificate at {{ lumina_tls_cert }}. Put one there,
+      or set lumina_tls_selfsigned true to have this role generate one, or lumina_certbot true to have
+      it obtain a trusted one, or lumina_tls_enabled false to serve plain HTTP deliberately.
+  when:
+    - lumina_tls_enabled | bool
+    - not (lumina_certbot | bool)
+    - not (lumina_tls_selfsigned | bool)
+
+- name: Install nginx vhost
+  ansible.builtin.template:
+    src: lumina.nginx.conf.j2
+    dest: /etc/nginx/conf.d/lumina.conf
+    mode: "0644"
+  notify: Reload nginx
+
+# Two separate things are needed for nginx to reach gunicorn, and only one of them is a boolean.
+#
+# ``httpd_can_network_connect`` covers nginx opening a *network* connection. It does nothing for a unix
+# socket, which is what this service binds: nginx runs as httpd_t and the socket sits in a runtime
+# directory labelled var_run_t, which httpd_t may not write. The symptom is a 502 from nginx with
+# nothing wrong in gunicorn's own log, and it appears only on a host with SELinux enforcing - never in
+# a container, where SELinux is off and every check passes.
+#
+# Labelling the directory httpd_var_run_t is what fixes it. systemd recreates the directory on each
+# start via RuntimeDirectory= and labels it from the policy database, so the fcontext rule has to
+# exist rather than the label being set once by hand.
+- name: Allow nginx to open network connections (SELinux)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: true
+    persistent: true
+  when: (ansible_selinux.status | default('disabled')) == 'enabled'
+
+# Only when a socket is what nginx talks to. See lumina_bind_tcp in defaults: on an enforcing host
+# the label is necessary and not sufficient, so TCP is the default and this is here for a host that
+# has been given a policy module.
+- name: Label the gunicorn socket directory so nginx may write to it (SELinux)
+  ansible.builtin.command:
+    cmd: >-
+      semanage fcontext -a -t httpd_var_run_t
+      "{{ lumina_socket | dirname }}(/.*)?"
+  register: lumina_fcontext
+  # semanage has no --if-not-exists, and re-adding an existing rule is an error rather than a no-op.
+  changed_when: lumina_fcontext.rc == 0
+  failed_when:
+    - lumina_fcontext.rc != 0
+    - "'already defined' not in lumina_fcontext.stderr"
+  when:
+    - not (lumina_bind_tcp | bool)
+    - (ansible_selinux.status | default('disabled')) == 'enabled'
+
+- name: Apply the label to what is already there
+  ansible.builtin.command:
+    cmd: restorecon -RF {{ lumina_socket | dirname }}
+  changed_when: lumina_fcontext.changed
+  when:
+    - not (lumina_bind_tcp | bool)
+    - (ansible_selinux.status | default('disabled')) == 'enabled'
+    - lumina_fcontext.changed
+  notify: Restart lumina
+
+- name: Enable and start lumina service
+  ansible.builtin.systemd:
+    name: lumina
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Before starting or reloading, not after. nginx refuses to load a config naming a certificate or key
+# it cannot read, and `systemctl reload` then fails, so a bad render reaches the running service as a
+# failed handler at the end of the deploy rather than as a named failure here. `nginx -t` is the same
+# check nginx does at load time, and it costs nothing.
+- name: Check the nginx configuration is loadable
+  ansible.builtin.command:
+    cmd: nginx -t
+  register: lumina_nginx_test
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to start nginx on a configuration it cannot load
+  ansible.builtin.assert:
+    that: lumina_nginx_test.rc == 0
+    fail_msg: >-
+      nginx will not load /etc/nginx/conf.d/lumina.conf. With TLS on, this is almost always the
+      certificate or its key: the vhost is pointed at {{ lumina_tls_cert }} and
+      {{ lumina_tls_key }}. nginx said: {{ lumina_nginx_test.stderr | default('') | trim }}
+
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+
+# Everything about this block is arranged so that certbot cannot hurt the deploy. It runs after nginx
+# is serving, it is skipped once the certificate it was asked for is there, it is skipped for a while
+# after a failure, it has a timeout, and its failure is reported rather than raised. The site is
+# already on HTTPS with the self-signed certificate by this point, so a certbot that never succeeds
+# costs nothing but trust.
+# Said out loud on every run, because "certbot was skipped" and "certbot was skipped for a good
+# reason" look identical in a CI log otherwise, and this section is one decision that is easy to get
+# wrong and invisible when it is. Three tasks rather than one message with the branch inside it: the
+# `when` is the branch, which is both what ansible-lint asks for and easier to read than a Jinja if.
+- name: Say that there is no certificate to start from
+  ansible.builtin.debug:
+    msg: >-
+      Nothing at {{ lumina_tls_le_cert }} yet, so asking Let's Encrypt for a certificate. TLS is
+      being served with the self-signed one until there is a real one.
+  when:
+    - lumina_certbot_possible | bool
+    - not (lumina_le_stat.stat.exists | default(false))
+
+- name: Say that the certificate already there is the one that was asked for
+  ansible.builtin.debug:
+    msg: >-
+      A certificate issued by {{ lumina_tls_le_issuer }} is already at {{ lumina_tls_le_cert }},
+      so certbot is not being asked again.
+  when:
+    - lumina_certbot_possible | bool
+    - lumina_tls_le_real | bool
+
+- name: Say that the certificate already there is being replaced
+  ansible.builtin.debug:
+    msg: >-
+      The certificate at {{ lumina_tls_le_cert }} is {{ lumina_tls_le_description }}, which is not
+      the certificate certbot was asked for, so it is being replaced.
+  when:
+    - lumina_certbot_possible | bool
+    - lumina_le_stat.stat.exists | default(false)
+    - not (lumina_tls_le_real | bool)
+
+# The state that generated the question "why is it stuck on the self-signed certificate?", where the
+# honest answer is that nothing ever asked for a real one. Every other reason certbot did not run has
+# a message; this one, being a plain "switched off", had none, and it is the likeliest of them.
+- name: Say that certbot is switched off
+  ansible.builtin.debug:
+    msg: >-
+      TLS is on with a self-signed certificate and certbot is switched off, so nothing is asking for
+      a trusted one and the certbot packages are not installed. Set lumina_certbot_email (through
+      lumina_dev_certbot_email on the dev playbook, which the deploy workflow fills from the
+      DEV_CERTBOT_EMAIL repository variable) to have this host get a real certificate. Nothing on the
+      host is in the way: the self-signed certificate is a fallback and is replaced the moment
+      certbot is enabled and succeeds.
+  when:
+    - lumina_tls_enabled | bool
+    - not (lumina_certbot | bool)
+
+- name: Say why certbot is not being tried
+  ansible.builtin.debug:
+    msg: >-
+      certbot is enabled and cannot run: it needs an account address (lumina_certbot_email is
+      "{{ lumina_certbot_email }}") and a public name that resolves to this host (lumina_tls_cert_name
+      is "{{ lumina_tls_cert_name }}"), because http-01 works by Let's Encrypt fetching a file over
+      port 80.
+      {{ ('TLS is being served with ' ~ lumina_tls_cert ~ '.') if lumina_tls_effective | bool
+         else 'TLS is not being served at all, so the site is answering on port 80 only: set
+               lumina_tls_selfsigned true for a fallback certificate, or lumina_tls_enabled false to
+               serve plain HTTP deliberately.' }}
+  when:
+    - lumina_certbot | bool
+    - lumina_tls_enabled | bool
+    - not (lumina_certbot_possible | bool)
+
+- name: Look for a recent certbot failure
+  ansible.builtin.stat:
+    path: "{{ lumina_certbot_marker }}"
+  register: lumina_certbot_marker_stat
+  when: lumina_certbot_possible | bool
+
+- name: Try for a real certificate
+  # Skipped only when the certificate we wanted is already there: asking again for one we have would
+  # burn the duplicate certificate rate limit for nothing, which is what makes a deploy-on-every-merge
+  # dangerous here. A self-signed or staging certificate is not one we have, so it does not skip.
+  when:
+    - lumina_certbot_possible | bool
+    - not (lumina_tls_le_real | bool)
+    - (not lumina_certbot_marker_stat.stat.exists)
+      or ((ansible_facts.date_time.epoch | int) - (lumina_certbot_marker_stat.stat.mtime | int)
+          > (lumina_certbot_retry_after | int))
+  block:
+    # certbot will not write a certificate into /etc/letsencrypt/live/<name> unless what is there is
+    # one of its own loadable lineages, and it discovers that only after the certificate has been
+    # issued: the issuance is spent and then discarded. So anything in the way goes first, while it
+    # still costs nothing.
+    #
+    # This is what a self-signed certificate at the certbot path actually needs. Deleting the lineage
+    # is certbot's own operation and takes the renewal config, live/ and archive/ with it; a directory
+    # with no lineage behind it is not certbot's to delete, so it is moved aside and kept.
+    - name: Clear the certbot path of anything certbot cannot use
+      when: lumina_tls_le_obstructed | bool
+      block:
+        - name: Ask certbot to drop the lineage it cannot load
+          ansible.builtin.command:
+            cmd: certbot delete --non-interactive --cert-name {{ lumina_tls_cert_name }}
+          register: lumina_certbot_delete
+          # A lineage too damaged for certbot to delete is not a reason to stop: the move below
+          # handles whatever is left.
+          failed_when: false
+          changed_when: lumina_certbot_delete.rc == 0
+          when: lumina_le_renewal_stat.stat.exists | default(false)
+
+        - name: See what survived that
+          ansible.builtin.stat:
+            path: "{{ lumina_tls_le_dir }}"
+          register: lumina_le_dir_stat
+
+        - name: Move it aside rather than delete it
+          # Kept, not removed. Whatever is here was somebody's certificate, and the role is not in a
+          # position to know it is worthless. The epoch in the name makes repeats non-destructive.
+          ansible.builtin.command:
+            cmd: >-
+              mv {{ lumina_tls_le_dir | quote }}
+              {{ (lumina_tls_le_dir ~ '.displaced-' ~ ansible_facts.date_time.epoch) | quote }}
+          changed_when: true
+          when: lumina_le_dir_stat.stat.exists
+
+        # nginx is already running by this point, and in this state it may be running on the very
+        # certificate just moved aside: it keeps serving from memory, but the vhost on disk now names
+        # a path that is gone, so the next reload from any cause fails. Pointed at the fallback
+        # immediately, so the config on disk and the files on disk agree at every moment, including
+        # the moments where certbot then fails and nothing else re-renders.
+        - name: Serve the self-signed certificate while there is nothing else
+          ansible.builtin.set_fact:
+            lumina_tls_cert: "{{ lumina_tls_selfsigned_cert }}"
+            lumina_tls_key: "{{ lumina_tls_selfsigned_key }}"
+            lumina_tls_effective: "{{ lumina_tls_selfsigned | bool }}"
+          when: lumina_le_dir_stat.stat.exists
+
+        - name: Re-render the vhost without the certificate that was cleared
+          ansible.builtin.template:
+            src: lumina.nginx.conf.j2
+            dest: /etc/nginx/conf.d/lumina.conf
+            mode: "0644"
+          notify: Reload nginx
+          when: lumina_le_dir_stat.stat.exists
+
+        - name: Say what was cleared
+          ansible.builtin.debug:
+            msg: >-
+              {{ lumina_tls_le_cert }} held {{ lumina_tls_le_description if lumina_le_stat.stat.exists
+              | default(false) else 'no certificate' }} with no certbot lineage behind it that certbot
+              could load. certbot cannot write into a directory like that, and would have spent an
+              issuance finding out, so it has been cleared first. Anything moved aside is beside it
+              under the same name with a .displaced- suffix.
+
+    - name: Ask Let's Encrypt
+      ansible.builtin.command:
+        # certonly with the webroot plugin, so certbot writes a challenge file and never edits the
+        # vhost. No --deploy-hook: the reload on renewal is a hook in renewal-hooks/deploy above, which
+        # covers every lineage on the host rather than only the one this command creates.
+        #
+        # --cert-name asks for this lineage name. It is a preference, not a guarantee: when a renewal
+        # config exists that certbot cannot load, it takes the new-request branch and its own naming
+        # collides with that config, so the certificate lands in <name>-0001 and the run still exits
+        # 0. The block above is what prevents that state, and the check below is what refuses to
+        # believe the exit code without looking.
+        #
+        # --force-renewal only when the lineage is loadable, which is the only case certbot can renew
+        # in place at all. Without it certbot answers "Certificate not yet due for renewal" and keeps
+        # the staging or expired certificate. Keyed on the lineage rather than on a file existing at
+        # the path, because forcing a renewal of a lineage that cannot be loaded does not renew
+        # anything, it issues.
+        cmd: >-
+          timeout {{ lumina_certbot_timeout }}
+          certbot certonly --non-interactive --agree-tos
+          --webroot --webroot-path {{ lumina_acme_webroot }}
+          --cert-name {{ lumina_tls_cert_name }}
+          --domain {{ lumina_tls_cert_name }}
+          --email {{ lumina_certbot_email }}
+          {{ '--staging' if lumina_certbot_staging | bool else '' }}
+          {{ '--force-renewal' if lumina_tls_le_loadable | bool else '' }}
+      register: lumina_certbot_run
+      # The deploy does not depend on this succeeding, and a failing ACME server must not take a
+      # working site down with it.
+      failed_when: false
+      changed_when: lumina_certbot_run.rc == 0
+
+    # certbot's exit code says an order completed. It does not say the certificate landed at the path
+    # this role reads, and there is a reachable state where it exits 0 having written somewhere else
+    # entirely. Trusting it there pointed nginx at a path that does not resolve, so `nginx -s reload`
+    # failed and the deploy went red, and deleted the back-off marker, so the next merge issued
+    # another certificate, and the next, until the weekly duplicate limit for that name was gone.
+    - name: Look again at what is actually there now
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: true
+      register: lumina_le_after_stat
+      loop:
+        - "{{ lumina_tls_le_cert }}"
+        - "{{ lumina_tls_le_key }}"
+      when: lumina_certbot_run.rc == 0
+
+    - name: Read the certificate certbot says it got
+      ansible.builtin.command:
+        cmd: >-
+          openssl x509 -in {{ lumina_tls_le_cert | quote }} -noout -issuer -subject -checkend 0
+      register: lumina_le_after_probe
+      changed_when: false
+      failed_when: false
+      when:
+        - lumina_certbot_run.rc == 0
+        - (lumina_le_after_stat.results | default([])
+           | map(attribute='stat.exists') | select | list | length) == 2
+
+    - name: Decide whether it really got one
+      ansible.builtin.set_fact:
+        # The same test as before the run, applied to the result. Deliberately not a weaker one: the
+        # question after certbot is the question before it.
+        lumina_certbot_delivered: >-
+          {{ lumina_certbot_run.rc == 0
+             and ((lumina_le_after_stat.results | default([])
+                   | map(attribute='stat.exists') | select | list | length) == 2)
+             and (lumina_le_after_probe.rc | default(1)) == 0
+             and ((lumina_le_after_probe.stdout_lines | default([])
+                   | select('match', '^issuer=') | first | default('issuer=?')
+                   | regex_replace('^issuer=', ''))
+                  != (lumina_le_after_probe.stdout_lines | default([])
+                      | select('match', '^subject=') | first | default('subject=!')
+                      | regex_replace('^subject=', ''))) }}
+
+    - name: Point nginx at the real certificate
+      when: lumina_certbot_delivered | bool
+      block:
+        - name: Use it from now on
+          ansible.builtin.set_fact:
+            lumina_tls_cert: "{{ lumina_tls_le_cert }}"
+            lumina_tls_key: "{{ lumina_tls_le_key }}"
+            lumina_tls_effective: true
+
+        - name: Re-render the vhost with it
+          ansible.builtin.template:
+            src: lumina.nginx.conf.j2
+            dest: /etc/nginx/conf.d/lumina.conf
+            mode: "0644"
+          notify: Reload nginx
+
+        # The handler that reloads nginx runs at the end of the play, so a vhost nginx cannot load
+        # becomes a failed handler after everything else has passed. Checked here, and put back if it
+        # does not hold: a new certificate is not worth taking the site down for, which is the same
+        # principle as certbot's failure not failing the deploy.
+        - name: Check nginx will load the new certificate
+          ansible.builtin.command:
+            cmd: nginx -t
+          register: lumina_nginx_test_le
+          changed_when: false
+          failed_when: false
+
+        - name: Go back to the certificate that worked
+          when: lumina_nginx_test_le.rc != 0
+          block:
+            - name: Point the vhost back at it
+              ansible.builtin.set_fact:
+                lumina_tls_cert: "{{ lumina_tls_selfsigned_cert }}"
+                lumina_tls_key: "{{ lumina_tls_selfsigned_key }}"
+                lumina_certbot_delivered: false
+
+            - name: Re-render the vhost with that
+              ansible.builtin.template:
+                src: lumina.nginx.conf.j2
+                dest: /etc/nginx/conf.d/lumina.conf
+                mode: "0644"
+              notify: Reload nginx
+
+            - name: Say what happened
+              ansible.builtin.debug:
+                msg: >-
+                  certbot got a certificate, but nginx will not load a vhost pointed at it, so the
+                  vhost has been put back to {{ lumina_tls_selfsigned_cert }} and the site stays up.
+                  nginx said: {{ lumina_nginx_test_le.stderr | default('') | trim }}
+
+        - name: Forget any earlier failure
+          when: lumina_nginx_test_le.rc == 0
+          ansible.builtin.file:
+            path: "{{ lumina_certbot_marker }}"
+            state: absent
+
+    # Both "it failed" and "it says it succeeded but there is no usable certificate where we read"
+    # come here. The second used to be indistinguishable from success and was the expensive one: the
+    # back-off exists to keep a deploy-on-every-merge under Let's Encrypt's limits, and it can only do
+    # that if every outcome that is not a certificate arms it.
+    - name: Record the failure, and carry on
+      when: not (lumina_certbot_delivered | bool)
+      block:
+        - name: Note when it failed
+          ansible.builtin.file:
+            path: "{{ lumina_certbot_marker }}"
+            state: touch
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Say so
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'certbot exited 0 but there is no CA-issued certificate and key at '
+                 ~ lumina_tls_le_cert ~ ', so an issuance was spent without arriving. Check for a '
+                 ~ lumina_tls_cert_name ~ '-0001 lineage under ' ~ (lumina_letsencrypt_dir ~ '/live') ~ '.'
+                 if lumina_certbot_run.rc == 0
+                 else 'certbot did not get a certificate (exit ' ~ lumina_certbot_run.rc ~ ').' }}
+              TLS is {{ ('being served with ' ~ lumina_tls_cert) if lumina_tls_effective | bool
+                        else 'not being served, so the site is answering on port 80 only' }},
+              and the deploy is continuing. This will not be retried for
+              {{ lumina_certbot_retry_after }} seconds, to stay under Let's Encrypt's limits.
+              {{ ('Reason: ' ~ (lumina_certbot_run.stderr | default('') | trim))
+                 if (lumina_certbot_run.stderr | default('') | trim) | length > 0 else '' }}
+
+# Only once certbot is installed and there is a certificate to renew. Enabling it otherwise fails on
+# a unit that does not exist, which would make an unreachable ACME server break the deploy through the
+# back door after all the care taken above.
+- name: Enable the renewal timer
+  ansible.builtin.systemd:
+    name: certbot-renew.timer
+    enabled: true
+    state: started
+  when:
+    - lumina_certbot_possible | bool
+    # A delivered certificate, not a zero exit code. Enabling the timer on the strength of the exit
+    # code alone armed a renewal for a lineage that was not there.
+    - (lumina_tls_le_real | bool) or (lumina_certbot_delivered | default(false) | bool)
+
+# AlmaLinux runs firewalld by default and it blocks 80 and 443, so without this nginx listens and
+# nothing outside the host can reach it. Easy to miss in testing: a container has no firewalld, so
+# every check from the host's own loopback passes while the site is unreachable from anywhere else.
+- name: Find out whether firewalld is running
+  ansible.builtin.service_facts:
+  when: lumina_manage_firewall | bool
+
+- name: Open the web ports in firewalld
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    state: enabled
+    # Both, so the rule survives a reboot and applies without waiting for one.
+    permanent: true
+    immediate: true
+  loop: "{{ ['http'] + (['https'] if lumina_tls_enabled | bool else []) }}"
+  when:
+    - lumina_manage_firewall | bool
+    # Undefined when firewalld is not installed at all, which ``default`` covers.
+    - (ansible_facts.services['firewalld.service'].state | default('stopped')) == 'running'

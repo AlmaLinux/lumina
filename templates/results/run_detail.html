@@ -1,0 +1,300 @@
+{% extends "base_public.html" %}
+{% block title %}Run {{ run.uuid }} - AlmaLinux Certification{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb" aria-label="breadcrumbs">
+  <li class="breadcrumb-item"><a href="{% url 'core:home' %}">Catalog</a></li>
+  <li class="breadcrumb-item active">Run {{ run.uuid|truncatechars:12 }}</li>
+</ol>
+
+<div class="page-header">
+  <h1 class="page-title">{{ run.display_name }}</h1>
+  {% comment %}A scoped run's subject is its component, and the machine it ran in is context.
+     Naming the host here, once and explicitly labelled, is what stops the rest of the page
+     reading as a validation of that host - which is how it read to the submitter who reported
+     this: "I'm still being prompted in the GUI in several different ways as if it is a whole
+     system run."{% endcomment %}
+  {% if run.is_scoped %}
+    <div class="page-subtitle mt-1">
+      <span class="badge bg-purple-lt">{{ run.scope_labels|join:" + " }} only</span>
+      <span class="text-secondary">
+        This run is evidence for the {{ run.scope_labels|join:" and " }} above and for nothing
+        else. Measured in {{ run.host_name }}, which it makes no claim about.
+      </span>
+    </div>
+  {% endif %}
+</div>
+
+{% if can_resubmit %}
+  <div class="alert {% if needs_changes %}alert-warning{% else %}alert-info{% endif %}">
+    {% if needs_changes %}
+      <h3 class="alert-title">A reviewer asked for changes</h3>
+      {% if run.reviewer_notes %}
+        {# Without this the submitter is told to change something and not what. #}
+        <p class="mb-2"><strong>What was asked:</strong> {{ run.reviewer_notes }}</p>
+      {% else %}
+        <p class="mb-2">No reason was recorded. Check the details below and
+          resubmit.</p>
+      {% endif %}
+      <p>Edit your details, then send it back for review.</p>
+    {% else %}
+      <h3 class="alert-title">Finish your submission</h3>
+      {% comment %}A scoped run needs nothing added: its subject is resolved from its own PCI IDs
+         at review, so the only "details" this panel could lead to are the host machine's, which
+         it must never be asked for. Saying "the catalog needs a little more" and then "Nothing
+         else is required of you for this run." two lines lower is the contradiction that was
+         reported.{% endcomment %}
+      {% if run.is_scoped %}
+        <p>
+          The suite collected everything needed. Release it for review when you are ready.
+        </p>
+      {% else %}
+        <p>
+          The suite collected the results; the catalog needs a little more that it
+          cannot detect. Add the details below, then submit the run for review.
+        </p>
+      {% endif %}
+    {% endif %}
+    {% if outstanding %}
+      <ul class="mb-3">
+        {% for item in outstanding %}<li>Still needed: {{ item }}</li>{% endfor %}
+      </ul>
+    {% elif listing_prompt.kind == "owned" or listing_prompt.kind == "proposed" %}
+      <p class="mb-3 text-secondary">
+        {% if listing_prompt.kind == "proposed" %}
+          Your listing details are saved. Submit the run and they will be
+          reviewed with it.
+        {% else %}
+          Nothing else is required - this {{ listing_prompt.subject }} is
+          already in the catalog as
+          <a href="{% url 'hardware:detail' listing_prompt.system.slug %}">{{ listing_prompt.system.name }}</a>.
+        {% endif %}
+      </p>
+    {% elif not run.is_scoped %}
+      {% comment %}Reached when the hardware is cataloged but somebody else maintains
+         the listing. Saying "already in the catalog" unconditionally was
+         claiming a fact nobody had checked, on brand-new hardware.
+
+         Skipped for a scoped run, where the sentence above already says the same thing without
+         implying there was a machine listing to check.{% endcomment %}
+      <p class="mb-3 text-secondary">
+        Nothing else is required of you for this run.
+      </p>
+    {% endif %}
+    {% if sibling_drafts %}
+      <p class="mb-3 text-secondary">
+        {% comment %}Siblings are runs making the same claim about the same hardware, so a scoped
+           run's batch is other runs of the same component. It said "of this machine" for both,
+           which on a scoped run named the one thing the batch is not about.{% endcomment %}
+        You have {{ sibling_drafts|length }} other unsubmitted run(s) of this
+        {% if run.is_scoped %}{{ run.scope_labels|join:" and " }}{% else %}machine{% endif %}
+        ({% for s in sibling_drafts %}{{ s.alma_release }}{% if not forloop.last %}, {% endif %}{% endfor %}).
+        {% if run.is_scoped %}
+          Each one only needs submitting.
+        {% else %}
+          Details you enter here are applied to those too, so each one only needs
+          submitting.
+        {% endif %}
+      </p>
+    {% endif %}
+    <div class="d-flex gap-2 align-items-center">
+      {% comment %}Offered on every run of one's own, including a re-validation of somebody
+         else's machine. It was gated on speaking for the hardware's vendor, and that refused
+         the form to two people who needed it: a component vendor claiming their own part, and
+         a submitter whose run was matched to the wrong listing. What a community member may
+         not do is restate the listing, which the form enforces on the fields themselves; the
+         releases, the component ties, and their own notes are theirs regardless. The run still
+         submits without any of it (``missing_submission_details``).{% endcomment %}
+      {% if can_resubmit and not run.is_scoped %}
+        {% comment %}Not for a scoped run. Every field behind this link describes the machine, and
+           ``propose_listing`` now refuses one, so the button could only bounce the submitter back
+           with an explanation. This is the button that was reported.{% endcomment %}
+        <a class="btn btn-outline-primary btn-sm"
+           href="{% url 'results:propose_listing' run.uuid %}">
+          {% if needs_changes %}Review and edit details
+          {% elif listing_prompt.kind == "proposed" %}Edit listing details
+          {% else %}Add listing details{% endif %}
+        </a>
+      {% endif %}
+      {% if sibling_drafts %}
+        {% comment %}The whole machine in one action. Offered first because it is
+           what a submitter uploading several AlmaLinux versions actually wants;
+           the single-run button stays for the case where they mean just this
+           one. On a scoped run the batch is the same component on several
+           releases, so it must not say "machine".{% endcomment %}
+        <form method="post" action="{% url 'results:submit_group_for_review' run.uuid %}">
+          {% csrf_token %}
+          <button class="btn btn-primary btn-sm" {% if outstanding %}disabled{% endif %}>
+            Submit all {{ sibling_drafts|length|add:"1" }} runs of this {% if run.is_scoped %}{{ run.scope_labels|join:" and " }}{% else %}machine{% endif %}
+          </button>
+        </form>
+      {% endif %}
+      <form method="post" action="{% url 'results:submit_for_review' run.uuid %}">
+        {% csrf_token %}
+        <button class="btn btn-sm {% if sibling_drafts %}btn-outline-primary{% else %}btn-primary{% endif %}"
+                {% if outstanding %}disabled{% endif %}>
+          {% if needs_changes %}Resubmit for review
+          {% elif sibling_drafts %}Submit only this one
+          {% else %}Submit for review{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+{% endif %}
+
+{% comment %}Self-service tier upgrade. This run's own submitter has since joined the verified vendor
+   that owns the listing, so their community evidence can now count at the vendor tier without
+   re-running anything. ``reassessable_as`` decides when to offer it; the POST re-checks the same
+   rule so it cannot be forged.{% endcomment %}
+{% if reassessable_vendor %}
+  <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      You now represent <strong>{{ reassessable_vendor.name }}</strong>, which owns this listing.
+      Re-assess this run to count your own evidence at the <strong>vendor</strong> tier - no need to
+      run the suite again.
+    </div>
+    <form method="post" action="{% url 'results:reassess_run' run.uuid %}">
+      {% csrf_token %}
+      <button class="btn btn-primary btn-sm">Re-assess as {{ reassessable_vendor.name }}</button>
+    </form>
+  </div>
+{% endif %}
+
+{% comment %}The explanations here are wanted on a draft page too; only the buttons are
+   suppressed there, because the alert above already carries the same link and
+   rendering both put "Edit listing details" and "Edit details" side by side
+   pointing at one form.{% endcomment %}
+{% if listing_prompt %}
+  {% if listing_prompt.kind == "propose" %}
+    <div class="alert alert-info d-flex justify-content-between align-items-center">
+      <div>
+        {% if listing_prompt.subject == "system" %}
+          <strong>{{ run.system_vendor }} {{ run.system_product }}</strong> is not in
+          the catalog yet.
+        {% elif listing_prompt.subject == "motherboard" %}
+          The motherboard <strong>{{ run.board_vendor }} {{ run.board_model }}</strong>
+          is not in the catalog yet. On a custom build the board identifies the
+          machine, which is listed as a system.
+          {% if listing_prompt.generic_reported %}The firmware reported a generic line, not a
+          model, so if this machine has a real vendor model number, add it.{% endif %}
+        {% else %}
+          This machine's firmware does not report its manufacturer or model, so
+          the catalog cannot identify it.
+        {% endif %}
+        Add the details a validation run can't provide and it will be listed
+        once this run is approved.
+      </div>
+      {% if not can_resubmit %}
+        <a class="btn btn-primary btn-sm ms-3 flex-shrink-0"
+           href="{% url 'results:propose_listing' run.uuid %}">
+          Describe this {{ listing_prompt.subject }}</a>
+      {% endif %}
+    </div>
+  {% elif listing_prompt.kind == "proposed" and not can_resubmit %}
+    {% comment %}Only shown once the run has left the submitter's hands, where
+       it is the one thing saying what happens next. While the run is still
+       theirs the alert above already says the details are saved and offers the
+       edit link, so this repeated it - and carried an "Edit details" button
+       pointing at a form that closes on submission and only redirects
+       back.{% endcomment %}
+    <div class="alert alert-secondary mb-3">
+      Listing details submitted - the {{ listing_prompt.subject }} is created
+      when a reviewer approves this run.
+    </div>
+  {% comment %}No banner for ``kind == "owned"``. A top-of-page alert used to say "This
+     model is already listed as X, which your vendor maintains" with a Propose changes
+     button, and it was telling the reader something the page states plainly further
+     down: the run is linked, and the Linked system row names that listing and links to
+     it. ``auto_link_existing_system`` runs at ingest, so on already-cataloged hardware
+     the listing the banner named *was* ``run.listing_system``.
+
+     The "owned" kind itself still matters, up in the draft alert, where it is the
+     difference between "nothing else is required, this is already catalogued" and
+     asking the submitter for details nobody needs. Editing a listing belongs on the
+     listing, which has its own Propose changes control.{% endcomment %}
+  {% endif %}
+{% endif %}
+
+{% if not run.is_public %}
+  <div class="alert alert-warning">
+    {% if run.is_embargoed %}
+      Embargoed until {{ run.publish_requested_date }} - not visible to the public yet.
+    {% elif needs_changes %}
+      A reviewer sent this back for changes. It is not public and will not be
+      reviewed again until you resubmit it.
+    {% elif is_draft and not outstanding %}
+      {% comment %}"Awaiting submitter details" is true of the status but reads as though
+         the details were not saved, which is exactly when a submitter has just
+         saved them. Say what is actually left to do.{% endcomment %}
+      Your details are saved. This run is <strong>not submitted yet</strong> -
+      use <em>Submit for review</em> above to send it to the reviewers.
+    {% else %}
+      This run is <strong>{{ run.get_status_display }}</strong> and not yet public.
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">Summary</h2>
+      {% include "results/_run_summary.html" %}
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">Result counts</h2>
+      {% for status, n in counts.items %}
+        <span class="badge {% if status == 'pass' %}text-bg-success{% elif status == 'fail' %}text-bg-danger{% elif status == 'error' %}text-bg-warning{% else %}text-bg-secondary{% endif %} me-1">{{ n }} {{ status }}</span>
+      {% empty %}
+        <span class="text-secondary">No test results.</span>
+      {% endfor %}
+      {% if run.listing_system %}
+        {% comment %}A run can be linked to a listing before that listing is
+           published, and hardware:detail refuses a draft.{% endcomment %}
+        <p class="mt-3 mb-0">Linked system:
+          {% include "hardware/_listing_link.html" with listing=run.listing_system with_vendor=True only %}</p>
+        {% comment %}The override itself lives on the propose form, where the fields it
+           reveals are. Only a pointer here, because this page is where somebody notices the
+           match is wrong.{% endcomment %}
+        {% if can_resubmit %}
+          <p class="text-secondary small mt-1 mb-0">
+            Not this machine?
+            <a href="{% url 'results:propose_listing' run.uuid %}">Say so on the listing
+              details page</a> and it will be listed on its own.
+          </p>
+        {% endif %}
+      {% endif %}
+      {% if linked_components %}
+        <p class="mt-3 mb-1">Linked components</p>
+        {% comment %}One per line with its type: a comma-separated run of names
+           gives no clue which is the board and which is the CPU, and the names
+           themselves often do not say.{% endcomment %}
+        <ul class="list-unstyled mb-0">
+          {% for c in linked_components %}
+            <li class="d-flex gap-2">
+              <span class="text-secondary flex-shrink-0"
+                    style="min-width: 7rem;">{{ c.get_kind_display }}</span>
+              <a href="{% url 'hardware:detail' c.slug %}">{{ c.display_label }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div></div>
+  </div>
+</div>
+
+{% if results %}
+  <div class="card mt-3"><div class="card-body">
+    <h2 class="h5">Validation tests</h2>
+    {% include "results/_test_table.html" %}
+  </div></div>
+{% endif %}
+
+{% if benchmarks %}
+  <div class="card mt-3"><div class="card-body">
+    <h2 class="h5">Benchmarks</h2>
+    {% include "results/_benchmark_table.html" %}
+  </div></div>
+{% endif %}
+{% endblock %}

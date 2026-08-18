@@ -1,0 +1,83 @@
+{% extends "base_public.html" %}
+{% comment %}Password login, mounted only when OIDC is absent.
+
+Production authenticates through Keycloak and never routes here: `lumina/urls.py` mounts
+this view in the branch that runs when `mozilla_django_oidc` is not installed, which is the
+devstack settings only.
+
+It exists because the devstack previously sent everybody to `/admin/login/`, and Django's
+admin form refuses any account without `is_staff`. That works for the seeded superuser and
+for nobody else, so the seeded `reviewer` - and any submitter or vendor account created to
+exercise the submitter flows - had no way in at all.
+{% endcomment %}
+{% block title %}Sign in - AlmaLinux Hardware Catalog{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-5">
+    <div class="card">
+      <div class="card-header">
+        <h1 class="card-title h4 mb-0">Sign in</h1>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info" role="note">
+          <strong>Development sign-in.</strong> This form only exists in the local dev
+          stack. The real deployment authenticates through Keycloak.
+        </div>
+
+        {% if form.errors %}
+          <div class="alert alert-danger" role="alert">
+            {% for error in form.non_field_errors %}
+              <div>{{ error }}</div>
+            {% empty %}
+              <div>That username and password did not match.</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.username.id_for_label }}">Username</label>
+            <input type="text" name="username" class="form-control" autofocus required
+                   autocapitalize="none" autocomplete="username"
+                   id="{{ form.username.id_for_label }}"
+                   value="{{ form.username.value|default:'' }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.password.id_for_label }}">Password</label>
+            <input type="password" name="password" class="form-control" required
+                   autocomplete="current-password"
+                   id="{{ form.password.id_for_label }}">
+          </div>
+          {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+          <button class="btn btn-primary w-100" type="submit">Sign in</button>
+        </form>
+
+        {% comment %}The seeded accounts, listed because this page only exists in a
+           development stack and hunting through seed_devstack.py for them is friction
+           with no upside. Never rendered anywhere a real deployment can reach.
+
+           The passwords are deliberately NOT stated. They used to be, as admin/admin and
+           reviewer/reviewer, which are seed_devstack's fallbacks and are what you get under
+           compose. A deployed dev host is reachable by anyone, so the Ansible play generates
+           both instead and passes them through DEVSTACK_ADMIN_PASSWORD and
+           DEVSTACK_REVIEWER_PASSWORD. On that host this page was telling everybody a password
+           that had never been set, which reads as broken logins rather than as stale text.
+        {% endcomment %}
+        <hr>
+        <p class="text-secondary small mb-1">Seeded accounts:</p>
+        <ul class="text-secondary small mb-0">
+          <li><code>admin</code> - superuser, staff, in the
+            <code>admin</code> group (so also a reviewer)</li>
+          <li><code>reviewer</code> - in the
+            <code>reviewer</code> group, deliberately not staff</li>
+        </ul>
+        <p class="text-secondary small mt-2 mb-0">
+          Under <code>compose.yaml</code> the password is the username. On a host deployed by
+          Ansible both are generated: <code>sudo cat /etc/lumina-dev-accounts.env</code>.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
