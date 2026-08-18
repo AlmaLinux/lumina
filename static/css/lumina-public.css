@@ -1,0 +1,278 @@
+/* Overrides on top of Tabler for the public catalog.
+   Palette and typography follow the AlmaLinux brand book
+   (https://almalinux.org/branding/): Montserrat everywhere, Black Pearl
+   navbar, Science Blue primary, and the approved green/yellow/red ramps
+   for semantic states. */
+
+:root {
+    /* Approved brand colors */
+    --alx-black-pearl: #082336;   /* dark surface */
+    --alx-darkest: #000518;
+    --alx-lighter-pearl: #264154;
+    --alx-blue-dark: #004bbc;     /* Dark blue */
+    --alx-blue: #0069da;          /* Science blue (logo blue) */
+    --alx-blue-light: #1e87f8;
+    --alx-green-dark: #68bc11;    /* Darker green */
+    --alx-green: #86da2f;         /* Atlantis (logo green) */
+    --alx-yellow-dark: #e1ad00;
+    --alx-yellow: #ffcb12;        /* Candlelight (logo yellow) */
+    --alx-red-dark: #e1282b;      /* Darker red */
+    --alx-red: #ff4649;           /* Sunburnt cyclops (logo red) */
+    --alx-peach: #faf5f5;
+
+    /* Point Tabler's theme tokens at the brand palette */
+    --tblr-font-sans-serif: "Montserrat", -apple-system, "Segoe UI", sans-serif;
+    --tblr-primary: var(--alx-blue);
+    --tblr-primary-rgb: 0, 105, 218;
+    --tblr-link-color: var(--alx-blue);
+    --tblr-link-hover-color: var(--alx-blue-dark);
+    --tblr-success: var(--alx-green-dark);
+    --tblr-success-rgb: 104, 188, 17;
+    --tblr-warning: var(--alx-yellow-dark);
+    --tblr-warning-rgb: 225, 173, 0;
+    --tblr-danger: var(--alx-red-dark);
+    --tblr-danger-rgb: 225, 40, 43;
+}
+
+body { font-family: var(--tblr-font-sans-serif); }
+
+.btn-primary {
+    --tblr-btn-bg: var(--alx-blue);
+    --tblr-btn-border-color: var(--alx-blue);
+    --tblr-btn-hover-bg: var(--alx-blue-dark);
+    --tblr-btn-hover-border-color: var(--alx-blue-dark);
+}
+.bg-success, .badge.bg-success, .text-bg-success { background-color: var(--alx-green-dark) !important; }
+.bg-danger, .badge.bg-danger, .text-bg-danger { background-color: var(--alx-red-dark) !important; }
+.bg-warning, .badge.bg-warning, .text-bg-warning { background-color: var(--alx-yellow-dark) !important; }
+
+/* Badge foregrounds, set for legibility. The brand green (#68bc11) and yellow are bright enough
+   that Bootstrap's default white badge text fails WCAG AA on them - the PASS badge came out at a
+   contrast of ~2.1 and was reported as hard to read - so those carry dark text (~7:1), while the
+   darker brand red keeps white. Scoped to ``.badge`` so progress-bar and alert fills, which manage
+   their own foregrounds, are left alone. */
+.badge.bg-success, .badge.text-bg-success { color: var(--alx-black-pearl) !important; }
+.badge.bg-warning, .badge.text-bg-warning { color: var(--alx-black-pearl) !important; }
+.badge.bg-danger, .badge.text-bg-danger { color: #fff !important; }
+
+.lumina-public-navbar {
+    background: var(--alx-black-pearl);
+    border-bottom: 3px solid var(--alx-blue);
+}
+.lumina-public-navbar .navbar-brand { color: #fff; }
+
+/* The navbar has to survive content wider than it is, and by default it does not.
+   ``navbar-expand-*`` sets flex-wrap: nowrap, so when the brand, six icon links and the session
+   controls do not fit, they are drawn on top of each other rather than reflowed. Reported with a
+   long signed-in username, but the username was only what pushed it over: a browser test over the
+   real geometry showed "Statistics" overlapping the name at 1280 with a seven-character username.
+
+   Allowing the row to wrap is the fix that cannot fail, whatever the content: another line is always
+   available. The breakpoint in the template (xl, not md) means it is rarely needed, because below
+   1200px the row collapses behind the toggler instead of being laid out at a width it cannot fill. */
+.lumina-public-navbar,
+.lumina-public-navbar .navbar-collapse,
+.lumina-public-navbar .navbar-nav { flex-wrap: wrap; row-gap: 0.25rem; }
+
+/* min-width: 0 lets a flex item be narrower than its content, which is what makes the truncation
+   below possible at all. */
+.lumina-public-navbar .navbar-brand,
+.lumina-public-navbar .navbar-collapse,
+.lumina-public-navbar .navbar-nav { min-width: 0; }
+
+/* The brand's wordmark goes before the logo does: the logo is the identity, the words are a label
+   for it. */
+.lumina-public-navbar .lumina-brand-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* A username is arbitrary text from an identity provider, so it gets a ceiling rather than trust.
+   The full value stays in the title attribute. */
+.lumina-public-navbar .lumina-user-name {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* Sign out must never be the thing that gets squeezed away: it is the only way back out. */
+.lumina-public-navbar .lumina-session-controls { flex-shrink: 0; }
+.lumina-public-navbar .nav-link { color: rgba(255, 255, 255, 0.85); }
+.lumina-public-navbar .nav-link:hover { color: #fff; }
+
+/* The validation badges and the --lumina-level-* tokens live in
+   lumina-levels.css, loaded by both this side and the admin side, because the
+   tiers are one vocabulary and two copies had already drifted apart. */
+
+/* Listing cards: left accent stripe tied to validation level. */
+.listing-card {
+    border-left: 4px solid var(--lumina-level-community);
+    transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.listing-card:hover { box-shadow: 0 0.5rem 1rem rgba(8, 35, 54, 0.15); transform: translateY(-1px); }
+.listing-card.level-almalinux { border-left-color: var(--lumina-level-almalinux); }
+.listing-card.level-vendor    { border-left-color: var(--lumina-level-vendor); }
+.listing-card.level-community      { border-left-color: var(--lumina-level-community); }
+.listing-card .min-w-0 { min-width: 0; }  /* lets long titles ellipsize inside flex */
+
+/* Vendor logo thumbnail on listing cards.
+   Fallback chip (first initial) appears when a vendor has no logo, so the
+   vertical rhythm of the list stays even. */
+.listing-logo {
+    width: 96px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border: 1px solid var(--alx-black-pearl);
+    border-color: rgba(8, 35, 54, 0.1);
+    border-radius: 0.25rem;
+    padding: 0.25rem;
+}
+.listing-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.listing-logo-fallback {
+    font-weight: 700;
+    font-size: 1.5rem;
+    color: var(--alx-black-pearl);
+    line-height: 1;
+}
+
+/* Filter panel: compact group cards, sticky on wide screens. */
+@media (min-width: 992px) {
+    .filter-panel { position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow-y: auto; }
+}
+.filter-group-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--tblr-body-color);
+    opacity: 0.7;
+    margin: 0 0 0.5rem;
+}
+
+/* A filter block that shows about five rows and scrolls for the rest.
+ *
+ * Used by the vendor list, which is the only facet with no upper bound: taxonomy
+ * values and AlmaLinux releases are curated, while vendors grow with the catalog.
+ * Unrolled, the card ended up taller than the results beside it.
+ *
+ * max-height rather than a JS collapse, so a short list is untouched - four
+ * vendors never reach the cap and get no scrollbar - and so the swapped-in search
+ * results are capped too without rebinding anything.
+ *
+ * The row height is the checkbox line plus its .mb-1; --alx-filter-rows is the one
+ * number to change to show more or fewer.
+ */
+.filter-values-scroll {
+    --alx-filter-rows: 5;
+    --alx-filter-row-height: 1.85rem;
+    max-height: calc(var(--alx-filter-rows) * var(--alx-filter-row-height));
+    overflow-y: auto;
+    /* Thin, and gutter-stable so the labels do not shift when the bar appears. */
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+}
+
+/* "Show N more…" / "Show less" toggle link */
+.filter-expand-toggle {
+    font-size: 0.8rem;
+    color: var(--alx-blue);
+    text-decoration: none;
+    display: block;
+}
+.filter-expand-toggle:hover { text-decoration: underline; }
+
+
+/* Benchmark bars -----------------------------------------------------------
+   One measure compared across hardware, so magnitude is the job: a single
+   hue (brand Science Blue) for every bar. Highlighting uses the emphasis
+   pattern - the subject keeps the hue and everything else recedes to gray -
+   rather than a second shade of blue. Two blue steps measured only ΔE 8.8
+   apart, which readers cannot reliably separate, so the emphasis would not
+   have read. Values and labels wear text tokens; only bars carry data color. */
+.bench-track {
+    position: relative;
+    background: rgba(8, 35, 54, 0.06);   /* one step off surface, recessive */
+    border-radius: 0 4px 4px 0;
+    height: 18px;                         /* under the 24px mark ceiling */
+    min-width: 2px;
+}
+.bench-bar {
+    height: 100%;
+    background: var(--alx-blue);
+    /* rounded data-end, square at the baseline it grows from */
+    border-radius: 0 4px 4px 0;
+    min-width: 3px;
+}
+/* Emphasis: when one row is the subject, the others step back to gray. */
+.bench-chart.has-emphasis .bench-bar { background: rgba(8, 35, 54, 0.28); }
+.bench-chart.has-emphasis .bench-bar.is-emphasis { background: var(--alx-blue); }
+/* 2px surface gap between adjacent bars, per the mark spec */
+.bench-row td { padding-top: 1px; padding-bottom: 1px; vertical-align: middle; }
+.bench-rank { width: 3rem; color: var(--tblr-secondary); font-variant-numeric: tabular-nums; }
+.bench-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bench-label { max-width: 22rem; }
+.bench-label a { text-decoration: none; }
+.bench-label a:hover { text-decoration: underline; }
+
+
+
+/* --- Hardware comparison -----------------------------------------------------
+   The value carries the weight; the delta sits beside it as a word plus a sign,
+   never as color alone, so it survives a colorblind reader and a printout. */
+.compare-table th, .compare-table td { vertical-align: top; }
+.compare-value { font-variant-numeric: tabular-nums; font-weight: 500; }
+.compare-delta { font-size: 0.8125rem; white-space: nowrap; }
+/* Darker than Tabler's green/red text tokens, which are tuned for white and fall to ~2.4:1 (better)
+   and ~3.9:1 (worse) on the tinted chip background below, under WCAG AA. These clear AA (>5:1) on
+   that tint while still reading green and red. */
+.compare-delta.is-better { color: #157347; }
+.compare-delta.is-worse { color: #b02a37; }
+/* A spec row the columns disagree on is where the explanation for the numbers
+   below usually is, so it gets a marker rather than blending in. */
+.compare-differs > th { font-weight: 600 !important; }
+.compare-differs > th::before { content: "\2022 "; color: var(--alx-blue, #0b5ed7); }
+.compare-group th {
+    background: var(--tblr-bg-surface-secondary, #f5f7fb);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+}
+/* Direction of goodness, per row. An arrow because the words do not fit on a
+   four-column table, with title and screen-reader text carrying the meaning for
+   anyone the glyph alone does not reach. */
+.dir-arrow {
+    color: var(--tblr-secondary);
+    font-weight: 600;
+    cursor: help;
+}
+/* The delta reads as a chip so a column can be scanned vertically. Sign and word
+   carry it; the tint is reinforcement, never the only signal. */
+.compare-delta {
+    display: inline-block;
+    padding: 0 0.25rem;
+    border-radius: 4px;
+}
+.compare-delta.is-better { background: rgba(47, 179, 68, 0.12); }
+.compare-delta.is-worse { background: rgba(214, 57, 57, 0.12); }
+
+/* CPU feature flags: a collapsed <details> in the run summary. A current x86 CPU
+   advertises 150-200 of these, so the list is the one place on a run page that
+   genuinely needs a scroll of its own rather than pushing the results below the
+   fold. max-height plus overflow keeps it bounded when expanded; the flags wrap
+   because they are ~40 short tokens per line, not a table. */
+.lumina-flags > summary {
+    cursor: pointer;
+}
+.lumina-flags-all {
+    max-height: 12rem;
+    overflow-y: auto;
+    line-height: 1.9;
+}

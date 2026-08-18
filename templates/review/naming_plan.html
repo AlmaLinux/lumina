@@ -1,0 +1,185 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Component naming{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    What the naming rules would call the parts already in the catalog. Saving a rule changes
+    nothing; this is where it takes effect.
+  </p>
+{% endblock %}
+{% block content %}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h2 class="h6 mb-0">Rules, in the order they are tried</h2>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'review:naming_rule_new' %}">
+        New rule
+      </a>
+    </div>
+    {% comment %}Disabled rules are listed too, greyed. They are not applied, but the page that
+       hides them is the page a reviewer cannot turn one back on from.{% endcomment %}
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr>
+        <th>Priority</th><th>Kind</th><th>Matches</th><th>Builds</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for rule in rules %}
+          <tr {% if not rule.enabled %}class="text-secondary"{% endif %}>
+            <td class="text-secondary">{{ rule.priority }}</td>
+            <td>{{ rule.kind|default:"any" }}</td>
+            <td class="small">
+              {% if rule.model_pattern %}
+                <span class="badge text-bg-light">model matches <code>{{ rule.model_pattern }}</code></span>
+              {% endif %}
+              {% for clause in rule.conditions %}
+                <span class="badge text-bg-light">{{ clause.field }} {{ clause.op|default:"eq" }} {{ clause.value }}</span>
+              {% empty %}
+                {% if not rule.model_pattern %}
+                  <span class="text-secondary">every part of this kind</span>
+                {% endif %}
+              {% endfor %}
+            </td>
+            <td class="small"><code>{{ rule.build }}</code>
+              {% if rule.fallback %}<br><span class="text-secondary">else</span>
+                <code>{{ rule.fallback }}</code>{% endif %}</td>
+            <td class="text-nowrap">
+              {% if rule.built_in %}<span class="badge text-bg-secondary">built in</span>{% endif %}
+              {% if not rule.enabled %}<span class="badge text-bg-light">off</span>{% endif %}
+              <a class="small ms-1" href="{% url 'review:naming_rule_edit' rule.pk %}">Edit</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-secondary">
+            No rules. Parts are named by the behaviour built into lumina.
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% comment %}Three outcomes, listed apart because only one of them is safe to do without a
+   person: a rename is unambiguous, a collision is a merge, and a conflict means a rule is
+   matching more broadly than whoever wrote it meant.{% endcomment %}
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h6">Would be renamed <span class="badge text-bg-primary">{{ plan.renames|length }}</span></h2>
+    {% if plan.renames %}
+      <table class="table table-sm mb-3">
+        <thead><tr><th>Now</th><th>Would become</th></tr></thead>
+        <tbody>
+          {% for row in plan.renames %}
+            <tr><td>{{ row.component.name }}</td><td><strong>{{ row.name }}</strong></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="{% url 'review:naming_apply' %}">
+        {% csrf_token %}
+        <button class="btn btn-primary" type="submit">Apply these renames</button>
+        <span class="text-secondary small ms-2">
+          The old name is kept as an alias, so a run that reported it still matches this part.
+        </span>
+      </form>
+    {% else %}
+      {% comment %}"Every part is already named as the rules say" is false whenever something is
+         held below, and it was the only thing this said: a reviewer whose new rule produced a
+         conflict saw zero renames, no Apply button, and a line telling them everything was
+         fine.{% endcomment %}
+      {% if plan.conflicts or plan.collisions %}
+        <p class="mb-0">
+          Nothing can be applied without a decision first.
+          {% if plan.conflicts %}
+            {{ plan.conflicts|length }} part(s) have runs that disagree about the name,
+          {% endif %}
+          {% if plan.collisions %}
+            {{ plan.collisions|length }} would take a name another part already has,
+          {% endif %}
+          and a part in either state is left alone until somebody resolves it. See below.
+        </p>
+      {% else %}
+        <p class="text-secondary mb-0">Nothing. Every part is already called what the rules say.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if plan.collisions %}
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h6">Needs a decision: the name is already taken
+        <span class="badge text-bg-warning">{{ plan.collisions|length }}</span></h2>
+      <p class="text-secondary small">
+        These two may be the same part, or may not, and nothing here can tell. Merging one into
+        the other moves its attestations and system links, so it is a person's call.
+      </p>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>This part</th><th>Would become</th><th>Already exists</th></tr></thead>
+        <tbody>
+          {% for row in plan.collisions %}
+            <tr>
+              <td>{{ row.component.name }}</td>
+              <td>{{ row.name }}</td>
+              <td>{% include "review/_component_link.html" with component=row.existing %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+{% if plan.conflicts %}
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h6">Needs a decision: runs disagree
+        <span class="badge text-bg-danger">{{ plan.conflicts|length }}</span></h2>
+      <p class="text-secondary small">
+        One part, and the runs that reported it would be named differently from each other. That
+        usually means a rule matches more broadly than whoever wrote it meant. Open a run on
+        either side to see what that machine reported, and write or narrow a rule from there.
+      </p>
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>Part</th><th>Would be named</th><th>By</th><th>On these runs</th>
+        </tr></thead>
+        <tbody>
+          {% for row in plan.conflicts %}
+            {% for source in row.sources %}
+              <tr>
+                {% if forloop.first %}
+                  <td rowspan="{{ row.sources|length }}">
+                    {% include "review/_component_link.html" with component=row.component %}
+                  </td>
+                {% endif %}
+                <td>{{ source.name }}</td>
+                {% comment %}Which rule produced this name. It is the first thing somebody asks
+                   looking at two names they did not expect, and working it out meant reading the
+                   rule table against the run by hand.{% endcomment %}
+                <td class="small">
+                  {% if source.rule %}
+                    <a href="{% url 'review:naming_rule_edit' source.rule.pk %}">
+                      rule #{{ source.rule.pk }}</a>
+                    <code class="text-secondary">{{ source.rule.build }}</code>
+                  {% else %}
+                    <span class="text-secondary">no rule, as the machine reported it</span>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  {% for run in source.runs %}
+                    <a href="{% url 'review:run_detail' run.pk %}">{{ run.system_product|default:run.uuid }}</a>{% if not forloop.last %}, {% endif %}
+                  {% endfor %}
+                  {% if source.more %}
+                    <span class="text-secondary">and {{ source.more }} more</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+<p class="text-secondary small">{{ plan.unchanged }} part(s) are already named as the rules say.</p>
+{% endblock %}

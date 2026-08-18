@@ -1,0 +1,62 @@
+---
+# The management commands here load /etc/lumina.env before running.
+#
+# That file is the service's configuration: the systemd unit reads it through EnvironmentFile, and
+# ``lumina.settings.base`` reads nothing but ``os.environ``. A handler invoking manage.py directly is
+# therefore outside that path, and with only DJANGO_SETTINGS_MODULE set it falls back to every default
+# in base.py - DB_PASSWORD empty among them - so migrate cannot authenticate against any host whose
+# database has a password, which is every host. Sourcing the file rather than restating its variables
+# here keeps one source of truth: a new setting added to the template reaches these automatically.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Migrate lumina
+  ansible.builtin.shell:
+    cmd: >-
+      set -a && . /etc/lumina.env && set +a
+      && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py migrate --noinput
+  # A handler only runs because something notified it, and a migration that had nothing to apply is
+  # not worth reporting differently from one that did.
+  changed_when: true
+  become: true
+  become_user: "{{ lumina_user }}"
+
+- name: Configure notifications
+  ansible.builtin.shell:
+    cmd: >-
+      set -a && . /etc/lumina.env && set +a
+      && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py configure_notifications
+  # Defined after "Migrate lumina" on purpose: handlers run in the order they are written here, not
+  # the order they were notified, and this writes rows into tables that migration creates.
+  #
+  # Notified by the environment file (a rotated webhook URL, or a changed channel) and by the clone
+  # (a release can add an event that needs routing). A dropped database notifies neither, which is
+  # why the dev play runs the same command outright after its reset.
+  changed_when: true
+  become: true
+  become_user: "{{ lumina_user }}"
+  # Prints no URL - a Mattermost incoming-webhook URL is the credential - so the output is safe in
+  # a CI log and this needs no no_log, which would hide its failures too.
+
+- name: Collectstatic lumina
+  ansible.builtin.shell:
+    cmd: >-
+      set -a && . /etc/lumina.env && set +a
+      && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py collectstatic --noinput
+  environment:
+    # Not in the env file: only collectstatic needs it, and the service does not.
+    LUMINA_STATIC_ROOT: "{{ lumina_static_root }}"
+  changed_when: true
+  become: true
+  become_user: "{{ lumina_user }}"
+
+- name: Restart lumina
+  ansible.builtin.systemd:
+    name: lumina
+    state: restarted
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

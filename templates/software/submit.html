@@ -1,0 +1,219 @@
+{% extends "base_admin.html" %}
+{% block title %}Submit software - AlmaLinux{% endblock %}
+{% block page_title %}Submit software for certification{% endblock %}
+{% block page_subtitle %}
+  <p class="text-secondary mb-0">
+    Tell us what the product is and which AlmaLinux releases it works on. A
+    reviewer decides what validation level it publishes at.
+  </p>
+{% endblock %}
+{% block content %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger" role="alert">
+    <ul class="mb-0">
+      {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% comment %}Override points for software/revise.html, which is this same form
+   bound to a submission a reviewer sent back. Blocks rather than a copy of the
+   markup: the two pages must not drift as fields are added.{% endcomment %}
+{% block submission_intro %}{% endblock %}
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  {{ form.software_slug.as_hidden }}
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title">The product</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Name</label>
+          {{ form.name }}
+          {% for error in form.name.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.vendor.id_for_label }}">Publisher</label>
+          {{ form.vendor }}
+          {% comment %}Said here rather than only in the card below, because this is
+             where the decision is made. Two things a submitter could not tell from
+             the control itself: that it takes typing, and what to do when their
+             publisher is missing.{% endcomment %}
+          <div class="form-text">
+            Start typing to search. Not listed?
+            Choose <strong>+ Add a new publisher</strong> at the end of the list.
+          </div>
+          {% for error in form.vendor.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+          {{ form.description }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.homepage_url.id_for_label }}">Website</label>
+          {{ form.homepage_url }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.documentation_url.id_for_label }}">Docs</label>
+          {{ form.documentation_url }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.support_url.id_for_label }}">Support</label>
+          {{ form.support_url }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title">AlmaLinux releases</h2></div>
+    <div class="card-body">
+      {% comment %}Majors only - no minor floor. A software certification says
+         "certified for AlmaLinux 9", with the implication that ongoing releases of
+         the product keep supporting it.{% endcomment %}
+      <p class="text-secondary small">
+        Which AlmaLinux major releases does this product support? Each one is
+        validated separately, so pick only the ones you stand behind.
+      </p>
+      {% for group in form.release_field_groups %}
+        <label class="form-check">
+          {{ group.bound_field }}
+          <span class="form-check-label">{{ group.release }}</span>
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if form.category_field_groups %}
+    <div class="card mb-3">
+      <div class="card-header"><h2 class="card-title">Categories</h2></div>
+      <div class="card-body">
+        {% for group in form.category_field_groups %}
+          <div class="mb-3">
+            <label class="form-label">{{ group.category.name }}</label>
+            {% comment %}Iterated rather than printed bare. Django's default
+               checkbox_select markup has no .form-check wrapper, so an input has
+               nothing to align its label against. Same shape as the release block
+               above and as the browse filter panel. Two columns from sm up, because
+               a single column of ten turns the card into a ladder.{% endcomment %}
+            <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-1">
+              {% for choice in group.bound_field %}
+                <div class="col">
+                  <label class="form-check mb-0">
+                    {{ choice.tag }}
+                    <span class="form-check-label">{{ choice.choice_label }}</span>
+                  </label>
+                </div>
+              {% empty %}
+                <div class="col-12">
+                  <p class="text-secondary small mb-0">
+                    No {{ group.category.name|lower }} values are available yet.
+                  </p>
+                </div>
+              {% endfor %}
+            </div>
+            {% if group.propose_bound_field %}
+              <div class="mt-1">{{ group.propose_bound_field }}</div>
+              <div class="form-text">
+                Proposing a value sends it to a reviewer before it appears as a filter.
+              </div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title">Attribution and evidence</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.on_behalf_of.id_for_label }}">
+            Submitting on behalf of
+          </label>
+          {{ form.on_behalf_of }}
+          {% for error in form.on_behalf_of.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.claimed_validation_level.id_for_label }}">
+            Claimed validation level
+          </label>
+          {{ form.claimed_validation_level }}
+          {% for error in form.claimed_validation_level.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+          <div class="form-text">
+            A reviewer may lower this. Vendor level needs a verified vendor you have
+            submit rights for.
+          </div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.evidence.id_for_label }}">
+            Supporting file (optional)
+          </label>
+          {{ form.evidence }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.submitter_notes.id_for_label }}">
+            Notes for the reviewer
+          </label>
+          {{ form.submitter_notes }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h2 class="card-title">New publisher</h2></div>
+    <div class="card-body">
+      <p class="text-secondary small">
+        Only needed if you chose "+ Add a new publisher" above. It stays unpublished
+        until a reviewer approves this submission, and proposing it does not make you
+        its owner - the vendor can claim that later.
+      </p>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.new_vendor_name.id_for_label }}">Name</label>
+          {{ form.new_vendor_name }}
+          {% for error in form.new_vendor_name.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.new_vendor_homepage.id_for_label }}">Website</label>
+          {{ form.new_vendor_homepage }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.new_vendor_contact_email.id_for_label }}">
+            Contact email
+          </label>
+          {{ form.new_vendor_contact_email }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.new_vendor_description.id_for_label }}">
+            Description
+          </label>
+          {{ form.new_vendor_description }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary">{% block submit_label %}Submit for review{% endblock %}</button>
+    <a class="btn btn-outline-secondary"
+       href="{% block cancel_url %}{% url 'software:browse' %}{% endblock %}">Cancel</a>
+  </div>
+</form>
+
+{% endblock %}

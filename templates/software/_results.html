@@ -1,0 +1,62 @@
+{% comment %}Software browse results. A fragment with no {% extends %}, so it is
+   valid both as an include and as the HTMX response body.
+
+   One badge per card: the highest tier across every cited major. The per-major
+   breakdown lives on the detail page instead, where a table has room to be read -
+   repeating it on every card made a page of listings too busy to scan.{% endcomment %}
+<div class="text-secondary small mb-2">
+  Showing {{ listings|length }} product{{ listings|length|pluralize }}
+</div>
+
+<div class="row row-cards">
+  {% for listing in listings %}
+    <div class="col-12">
+      <article class="card listing-card level-{{ listing.validation_level }}">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-3">
+            <div class="flex-grow-1">
+              <a class="text-reset listing-title" href="{{ listing.get_absolute_url }}">
+                <h2 class="h4 mb-1">{{ listing.name }}</h2>
+              </a>
+              <div class="text-secondary small mb-2">
+                {{ listing.vendor.name }}
+              </div>
+              {% if listing.description %}
+                <p class="text-secondary mb-2"
+                   style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                  {{ listing.description }}
+                </p>
+              {% endif %}
+              <div class="d-flex flex-wrap gap-1">
+                {% for binding in listing.category_values.all %}
+                  <span class="badge bg-secondary-lt">{{ binding.value.value }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="text-end flex-shrink-0">
+              <span class="badge badge-validation badge-{{ listing.validation_level }}">
+                {{ listing.get_validation_level_display }}
+              </span>
+              {% comment %}Same shape as the hardware cards. Only above one: "× 1
+                 attestations" is noise, and the per-major breakdown lives on the
+                 detail page.{% endcomment %}
+              {% if listing.attestation_count > 1 %}
+                <div class="small text-secondary mt-1">× {{ listing.attestation_count }} attestations</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  {% empty %}
+    <div class="col-12">
+      <div class="empty">
+        <div class="empty-icon"><i class="ti ti-apps-off"></i></div>
+        <p class="empty-title">No software matches these filters</p>
+        <p class="empty-subtitle text-secondary">
+          Try clearing a filter, or search for a different product.
+        </p>
+      </div>
+    </div>
+  {% endfor %}
+</div>

@@ -1,0 +1,58 @@
+{% comment %}The per-release compatibility table, shared by both catalogs.
+
+Both pages answer the same two questions per AlmaLinux release - who certified it,
+and how many community members confirmed it - so the card chrome is one template.
+It had already drifted: software used Tabler's `card-table` and a real `card-footer`
+for its note, while hardware wrapped a `table-sm` in `card-body p-0` and put the
+note in a padded paragraph. Same information, visibly different spacing.
+
+The rows genuinely differ and stay per-catalog. Software rows carry an HTMX id and a
+confirm/withdraw control and can be awaiting review; hardware rows carry a minor
+floor in the release label and a proven-versus-declared distinction, and have no
+control because attesting there means running the suite. So the row template is
+passed in rather than shared.
+
+Parameters:
+  rows          - the release rows, newest first
+  row_template  - path to the per-row partial
+  columns       - list of column headings
+  empty_message - shown when the listing cites no releases
+  note          - the card footer's explanatory text
+
+The two callers differ on `only`, and the asymmetry is load-bearing.
+`hardware/detail.html` passes it: its rows need nothing but `row`.
+`software/detail.html` must NOT, because its row template reads `request.user`,
+`confirmed_majors`, `software.slug`, and `{% csrf_token %}` from the parent context to
+render the confirm/withdraw control.
+
+Adding `only` to the software include "for consistency" silently removes that control
+for every signed-in viewer, with no error and no failing template.
+{% endcomment %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h2 class="card-title">AlmaLinux compatibility</h2>
+  </div>
+  <div class="table-responsive">
+    <table class="table card-table align-middle">
+      <thead>
+        <tr>
+          {% for heading in columns %}<th>{{ heading }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          {% include row_template %}
+        {% empty %}
+          <tr>
+            <td colspan="{{ columns|length }}" class="text-secondary text-center py-4">
+              {{ empty_message }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if note %}
+    <div class="card-footer text-secondary small">{{ note }}</div>
+  {% endif %}
+</div>

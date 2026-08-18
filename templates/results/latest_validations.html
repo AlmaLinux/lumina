@@ -1,0 +1,42 @@
+{% extends "base_public.html" %}
+{% block title %}Recently validated hardware - AlmaLinux{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="row align-items-end">
+    <div class="col"><h1 class="page-title">Recently validated hardware</h1></div>
+    <div class="col-auto">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'results:validations_feed' %}">
+        <i class="ti ti-rss"></i> Feed
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="card"><div class="list-group list-group-flush">
+  {% for run in runs %}
+    <a class="list-group-item list-group-item-action" href="{{ run.get_absolute_url }}">
+      <div class="d-flex justify-content-between">
+        <span>
+          {% if run.verdict %}<span class="badge text-bg-success">PASS</span>{% else %}<span class="badge text-bg-danger">FAIL</span>{% endif %}
+          <strong>{{ run.display_name }}</strong>
+          {% comment %}A PASS beside a name, with no scope, is read as the whole machine passing.
+             On a scoped row the name is the component and the CPU beside it belongs to the host,
+             which the run says nothing about.{% endcomment %}
+          {% if run.is_scoped %}
+            <span class="badge bg-purple-lt">{{ run.scope_labels|join:" + " }} only</span>
+            <span class="text-secondary">in {{ run.host_name }}</span>
+          {% else %}
+            <span class="text-secondary">{{ run.cpu_model }}</span>
+          {% endif %}
+        </span>
+        <span class="text-secondary small">
+          {% if run.alma_release %}AlmaLinux {{ run.alma_release.major }} · {% endif %}{{ run.published_at|timesince }} ago
+        </span>
+      </div>
+    </a>
+  {% empty %}
+    <div class="list-group-item text-secondary">No validated systems published yet.</div>
+  {% endfor %}
+</div></div>
+{% endblock %}

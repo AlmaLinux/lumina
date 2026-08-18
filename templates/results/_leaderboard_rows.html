@@ -1,0 +1,156 @@
+{% comment %}
+HTMX-swappable leaderboard body. Two modes:
+
+- grouped (`grouping` set): one row per CPU/GPU/system, bar = median score,
+  clicking a row drills into that hardware's individual runs;
+- individual (`rows` set): one row per run.
+
+Table + bars rather than a plotted chart: the labels are long hardware names
+and every row's value is itself the content, so the bar is an at-a-glance
+magnitude cue riding a table that stays readable and copyable.
+{% endcomment %}
+<div id="leaderboard">
+  {% if grouping %}
+    <div class="d-flex justify-content-between align-items-baseline mb-2 gap-3">
+      <div class="text-secondary small">
+        {% if selected.cpu_family or selected.gpu_family %}
+          Models in <strong>{{ selected.cpu_family|default:selected.gpu_family }}</strong>.
+        {% endif %}
+        Ranked by median {{ metric }}{% if grouping.unit %} ({{ grouping.unit }}){% endif %}
+        across {{ grouping.groups|length }} {{ grouping.group_label|lower }}{{ grouping.groups|length|pluralize }}.
+        {% if grouping.lower_better %}<strong>Lower is better</strong> - bars show
+        the value, so a shorter bar is a better result.{% endif %}
+      </div>
+      {% if selected.cpu_family or selected.gpu_family %}
+        <a class="small text-nowrap" href="?metric={{ metric|urlencode }}&amp;version={{ version|urlencode }}">
+          &larr; Clear filter
+        </a>
+      {% endif %}
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 bench-chart">
+          <thead>
+            <tr>
+              <th class="bench-rank">#</th>
+              <th>{{ grouping.group_label }}</th>
+              <th style="width: 34%">Median {{ metric }}</th>
+              <th class="text-end">Median</th>
+              <th class="text-end">Best</th>
+              <th class="text-end">Runs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for g in grouping.groups %}
+              <tr class="bench-row">
+                <td class="bench-rank">{{ g.rank }}</td>
+                <td class="bench-label">
+                  {% comment %}Link on g.key (the group key, a PCI id for a GPU card), show g.label
+                     (the human name). For every non-GPU dimension label equals key.{% endcomment %}
+                  <a href="?{% if grouping.group_by == 'system' %}group=none{% else %}{{ grouping.group_by }}={{ g.key|urlencode }}{% endif %}&amp;metric={{ metric|urlencode }}&amp;version={{ version|urlencode }}"
+                     title="Show individual runs">{{ g.label|default:g.key }}</a>
+                </td>
+                <td>
+                  <div class="bench-track" role="img"
+                       aria-label="{{ g.median|floatformat:'-2' }} {{ grouping.unit }}">
+                    <div class="bench-bar" style="width: {{ g.percent }}%"></div>
+                  </div>
+                </td>
+                <td class="text-end bench-value"><strong>{{ g.median|floatformat:"-2" }}</strong></td>
+                <td class="text-end bench-value text-secondary">{{ g.best|floatformat:"-2" }}</td>
+                <td class="text-end text-secondary">{{ g.runs }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="text-secondary text-center py-4">
+                No results match these filters.
+              </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  {% else %}
+    <div class="d-flex justify-content-between align-items-baseline mb-2">
+      <div class="text-secondary small">
+        {{ rows|length }} individual run{{ rows|length|pluralize }}, ranked by {{ metric }}.
+      </div>
+      {% if selected.cpu or selected.gpu or selected.cpu_family or selected.gpu_family %}
+        <a class="small" href="?metric={{ metric|urlencode }}&amp;version={{ version|urlencode }}">
+          &larr; Clear filters
+        </a>
+      {% endif %}
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 bench-chart">
+          <thead>
+            <tr>
+              <th class="bench-rank">#</th>
+              <th>Hardware</th>
+              <th style="width: 26%">{{ metric }}</th>
+              <th class="text-end">Value</th>
+              <th>AlmaLinux</th>
+              <th>Submitted by</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr class="bench-row">
+                <td class="bench-rank">{{ row.rank }}</td>
+                <td class="bench-label">
+                  {{ row.run.cpu_model|default:"-" }}
+                  {% comment %}A second socket roughly doubles an all-core score,
+                     so ranking without showing the socket count invites a reader
+                     to compare two machines that are not comparable. Shown only
+                     when it is more than one, which is the case that matters.
+                  {% endcomment %}
+                  {% if row.run.cpu_sockets and row.run.cpu_sockets > 1 %}
+                    <span class="badge text-bg-secondary">{{ row.run.cpu_sockets }}P</span>
+                  {% endif %}
+                  {% comment %}For a GPU row, the card that produced this figure (device_model),
+                     not the run's single primary GPU - they differ on a multi-GPU machine. Falls
+                     back to the run's gpu_model for non-GPU rows.{% endcomment %}
+                  {% if row.device_model %}
+                    <span class="text-secondary small">· {{ row.device_model }}{% if row.device_ordinal %} #{{ row.device_ordinal }}{% endif %}
+                      {% if row.run.gpu_driver %}({{ row.run.gpu_driver }}){% endif %}</span>
+                  {% elif row.run.gpu_model %}
+                    <span class="text-secondary small">· {{ row.run.gpu_model }}
+                      {% if row.run.gpu_driver %}({{ row.run.gpu_driver }}){% endif %}</span>
+                  {% endif %}
+                  <div class="text-secondary small">
+                    {% if row.run.system_vendor %}{{ row.run.system_vendor }} {{ row.run.system_product }}{% endif %}
+                    {% if row.run.cpu_cores %}
+                      · {{ row.run.cpu_cores }}c{% if row.run.cpu_threads %}/{{ row.run.cpu_threads }}t{% endif %}
+                    {% endif %}
+                    {% if row.run.memory_gb %}
+                      · {{ row.run.memory_gb }} GB{% if row.run.memory_type %} {{ row.run.memory_type }}{% endif %}{% if row.run.memory_speed_mts %}-{{ row.run.memory_speed_mts }}{% endif %}
+                    {% endif %}
+                  </div>
+                </td>
+                <td>
+                  <div class="bench-track" role="img"
+                       aria-label="{{ row.value|floatformat:'-2' }} {{ row.unit }}">
+                    <div class="bench-bar" style="width: {{ row.percent }}%"></div>
+                  </div>
+                </td>
+                <td class="text-end bench-value">
+                  <strong>{{ row.value|floatformat:"-2" }}</strong>
+                  <span class="text-secondary">{{ row.unit }}</span>
+                </td>
+                <td>{% if row.run.alma_release %}{{ row.run.alma_release.major }}{% if row.run.alma_minor %}.{{ row.run.alma_minor }}{% endif %}{% endif %}</td>
+                <td class="text-secondary small">{{ row.run.submitter.username }}</td>
+                <td class="text-end"><a href="{{ row.run.get_absolute_url }}" class="small">run</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="text-secondary text-center py-4">
+                No results match these filters.
+              </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+</div>

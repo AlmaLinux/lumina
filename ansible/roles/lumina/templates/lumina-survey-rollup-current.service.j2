@@ -1,0 +1,33 @@
+[Unit]
+Description=Recompute Lumina survey aggregates for the current month
+After=network.target
+
+[Service]
+Type=oneshot
+User={{ lumina_user }}
+Group={{ lumina_group }}
+EnvironmentFile=/etc/lumina.env
+WorkingDirectory={{ lumina_app_dir }}
+# A runtime directory of this pair's own, not /run/lumina: that one belongs to
+# lumina.service via RuntimeDirectory=, so systemd deletes it whenever the app stops, and
+# a lock the rollup needs must not depend on the web service running. Preserve=yes keeps
+# it when either oneshot exits, so the two units genuinely share one lock file.
+RuntimeDirectory=lumina-rollup
+RuntimeDirectoryPreserve=yes
+# Two things worth knowing about this line.
+#
+# --current rather than a shell computing the month: the period a submission falls in is
+# decided in the project's timezone (Django converts before comparing), and `date -u` in
+# a unit file would disagree with that either side of a month boundary.
+#
+# flock, shared with the nightly full rebuild: both delete and recreate a period's rows,
+# so running them at once means two transactions racing on the same rows. -n skips this
+# run rather than queueing it, which is right for a refresher that runs again in an hour;
+# the nightly one waits instead, because it must not be skipped.
+#
+# -E 0 makes a skipped run exit 0, rather than flock's default 1. SuccessExitStatus=1
+# would do the same thing and would also swallow a real failure, since a Django
+# management command exits 1 on CommandError: this way a lock conflict is a success and a
+# broken rollup is still a failed unit.
+ExecStart=/usr/bin/flock -E 0 -n /run/lumina-rollup/survey-rollup.lock \
+    {{ lumina_venv }}/bin/python manage.py survey_rollup --current

@@ -1,0 +1,39 @@
+{% comment %}The pager for one section, and the count that gives it meaning.
+
+   Shown once there is more than one page, or a search is in force - where "3 of 340 matching" is
+   the fact a reader needs. A single-page list needs no footer saying it is all there.
+
+   Takes: section, and optionally noun (what the rows are, for the count line).
+{% endcomment %}
+{% if section.paged %}
+  <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2 small">
+    <span class="text-secondary">
+      {{ section.page.start_index }}&ndash;{{ section.page.end_index }}
+      of {{ section.count }}{% if noun %} {{ noun }}{% endif %}{% if section.query %}
+        matching &ldquo;{{ section.query }}&rdquo;{% endif %}
+    </span>
+    {% if section.page.has_other_pages %}
+      <nav aria-label="{{ section.key|default:'results' }} pages">
+        <ul class="pagination pagination-sm mb-0">
+          {% if section.page.has_previous %}
+            <li class="page-item">
+              <a class="page-link" href="{{ section.base }}{{ section.param }}={{ section.page.previous_page_number }}">Previous</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Previous</span></li>
+          {% endif %}
+          <li class="page-item disabled">
+            <span class="page-link">Page {{ section.page.number }} of {{ section.page.paginator.num_pages }}</span>
+          </li>
+          {% if section.page.has_next %}
+            <li class="page-item">
+              <a class="page-link" href="{{ section.base }}{{ section.param }}={{ section.page.next_page_number }}">Next</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Next</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+    {% endif %}
+  </div>
+{% endif %}

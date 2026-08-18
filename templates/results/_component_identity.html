@@ -1,0 +1,136 @@
+{% comment %}What a component *is*: the catalog match, or the boxes to describe a new part.
+
+Shared by the submitter's listing-details form and the reviewer's tie editor, because it is the
+same job from two seats and the fields behind it come from one mixin. A second copy is how the
+two drift into offering different controls over the same data.
+
+Two shapes, mirroring the machine's identity card:
+
+- **Matched** - suggest the match and keep the boxes collapsed behind an override. Two prefilled
+  text boxes over an entry the catalog already holds read as an invitation to retype it, and one
+  stray character mints "Intel Core i3-10100T " beside the real thing.
+- **New, or already corrected** - the boxes, because describing the part is the whole point
+  there, and a row somebody already corrected stays open so they can keep editing or undo it by
+  retyping what the report said.
+
+- **Somebody who is not deciding** - a submitter. They get one question, behind a disclosure, and
+  only if their machine reported something else worth offering. They pick a value, never a field:
+  being asked which field holds the real model is being asked to understand the payload.
+
+Requires `entry` and `counter` (unique per row, for the ids).
+{% endcomment %}
+{% if entry.suggest_field %}
+  {% comment %}Closed by default. Asked of every part on every run it is noise; behind "Not this
+     part?" it is a short question about hardware the reader is holding.
+
+     The radios are written out rather than left to the widget so the value leads and its source
+     sits under it in small text. The source label is the only thing that tells two similar values
+     apart, and it is the closest a submitter comes to seeing where a value lives.{% endcomment %}
+  <details class="mt-1 small">
+    <summary class="text-primary" style="cursor:pointer">Not this part?</summary>
+    <div class="mt-2">
+      <div class="text-secondary mb-2">
+        This machine also reported these. Is one of them the actual
+        {% if entry.kind == "motherboard" %}board{% else %}model{% endif %}?
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="radio" value=""
+               name="{{ entry.suggest_field.name }}" id="sug-{{ counter }}-keep"
+               {% if not entry.suggest_field.value %}checked{% endif %}>
+        <label class="form-check-label" for="sug-{{ counter }}-keep">Yes, that is right</label>
+      </div>
+      {% for candidate in entry.candidates %}
+        <div class="form-check">
+          <input class="form-check-input" type="radio" value="{{ forloop.counter0 }}"
+                 name="{{ entry.suggest_field.name }}"
+                 id="sug-{{ counter }}-{{ forloop.counter0 }}"
+                 {% if entry.suggest_field.value|stringformat:"s" == forloop.counter0|stringformat:"s" %}checked{% endif %}>
+          <label class="form-check-label" for="sug-{{ counter }}-{{ forloop.counter0 }}">
+            <strong>{{ candidate.value }}</strong>
+            <span class="text-secondary d-block">{{ candidate.label }}</span>
+          </label>
+        </div>
+      {% endfor %}
+      <div class="form-check">
+        <input class="form-check-input" type="radio" value="other"
+               name="{{ entry.suggest_field.name }}" id="sug-{{ counter }}-other"
+               {% if entry.suggest_field.value == "other" %}checked{% endif %}>
+        <label class="form-check-label" for="sug-{{ counter }}-other">
+          Something else &mdash; I&rsquo;ll describe it
+          <span class="text-secondary d-block">Say what it is in your notes below.</span>
+        </label>
+      </div>
+      <div class="text-secondary mt-2">Nothing is renamed now &mdash; a reviewer decides.</div>
+    </div>
+  </details>
+{% elif entry.asks_suggestion %}
+  {% comment %}A part a rule could name, whose machine offered no other string for it. Straight to
+     the notes field that already exists, rather than an empty list behind a disclosure.
+
+     ``asks_suggestion`` and not ``ruled``: the second is true of the part and the first of the
+     seat. Keyed on the part, this rendered on the reviewer's page too, directly above their own
+     "Not this part? Correct it" - two prompts with the same words and different jobs.
+  {% endcomment %}
+  <details class="mt-1 small">
+    <summary class="text-primary" style="cursor:pointer">Not this part?</summary>
+    <div class="text-secondary mt-2">
+      This machine reported no other name for it. Tell the reviewer what it should be in your
+      notes below, and they can correct it for every machine like yours.
+    </div>
+  </details>
+{% endif %}
+{% if entry.edit_field %}
+  <div class="mt-1">
+    {% comment %}Same mechanism as the identity override: the reveal is CSS off this checkbox's
+       own :checked state, so the control that opens the boxes is the value that posts and the
+       two cannot disagree. `.visually-hidden` keeps it focusable, so space still toggles it
+       from the keyboard.{% endcomment %}
+    <input type="checkbox" name="{{ entry.edit_field.name }}" value="1"
+           id="tie-edit-{{ counter }}" class="reveal-toggle visually-hidden">
+    <label class="btn btn-sm btn-link px-0 align-baseline" for="tie-edit-{{ counter }}">
+      <span class="reveal-when-closed">Not this part? Correct it</span>
+      <span class="reveal-when-open">Keep the catalog match</span>
+    </label>
+    <div class="reveal-fields row g-2">
+      <div class="col-sm-5">
+        <label class="form-label small mb-0"
+               for="{{ entry.brand_field.id_for_label }}">Vendor</label>
+        {{ entry.brand_field }}
+      </div>
+      <div class="col-sm-7">
+        <label class="form-label small mb-0"
+               for="{{ entry.model_field.id_for_label }}">Model</label>
+        {{ entry.model_field }}
+      </div>
+      <div class="col-12">
+        <span class="text-secondary small">
+          Correcting this detaches the run from
+          <strong>{{ entry.component }}</strong>. Leave it alone to attest that entry.
+        </span>
+      </div>
+    </div>
+  </div>
+{% elif entry.brand_field %}
+  {% comment %}Suggestible on both boxes, so a correction reuses an existing entry rather than
+     minting a near-duplicate beside it.{% endcomment %}
+  <div class="row g-2 mt-1">
+    <div class="col-sm-5">
+      <label class="form-label small mb-0"
+             for="{{ entry.brand_field.id_for_label }}">Vendor</label>
+      {{ entry.brand_field }}
+    </div>
+    <div class="col-sm-7">
+      <label class="form-label small mb-0"
+             for="{{ entry.model_field.id_for_label }}">Model</label>
+      {{ entry.model_field }}
+    </div>
+    {% if entry.overridden %}
+      <div class="col-12">
+        <span class="text-secondary small">
+          Corrected. The report said
+          <em>{{ entry.reported_brand }} {{ entry.reported_model }}</em>.
+        </span>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}

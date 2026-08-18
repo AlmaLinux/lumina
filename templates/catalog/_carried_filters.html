@@ -1,0 +1,15 @@
+{% comment %}The facet filters the header search box would otherwise throw away.
+
+Both catalog headers post `hx-get="{{ request.path }}"`, which is path-only, so HTMX replaces the
+whole query string with that form's data. The form held one field, `q`, so typing in the search box
+silently cleared every facet the reader had chosen: vendor, AlmaLinux version, tier, category. The
+filter panel already carries `q` the other way (`_filter_panel.html`), so the asymmetry was between
+two halves of one screen, and only one direction lost anything.
+
+`page` is deliberately not carried. A new search is a new result set, and page 7 of the old one is
+not a sensible place to land.
+
+`active_filters` is `core.http.params`, a dict of lists, so repeated keys (`?vendor=dell&vendor=hpe`)
+each get their own hidden input rather than being collapsed to the last one.{% endcomment %}
+{% for key, values in active_filters.items %}{% if key != "q" and key != "page" %}{% for value in values %}
+<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}{% endif %}{% endfor %}

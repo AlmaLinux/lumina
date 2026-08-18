@@ -1,0 +1,48 @@
+{% comment %}Possible duplicate listings for a submission. Expects `similar`, optionally `compact`.
+
+The manual submit form always creates a new listing and can no longer target an
+existing one, which is what stopped it rewriting other people's compatibility. The
+trade is that two people cataloguing one machine fork the catalog: there is no
+duplicate check on listings, and ``generate_unique_slug`` appends "-2" without
+comment. A reviewer is the only thing standing between that and two half-evidenced
+listings for one server.
+
+Phrased as a question rather than an error. This is a heuristic over hand-typed names
+(see ``hardware.services.similar_listings``), and a reviewer who is told "duplicate"
+about a genuinely different machine learns to dismiss the banner.
+
+`compact` is the queue's one-line form; the detail page gets the full list with links.
+{% endcomment %}
+{% if similar %}
+  {% if compact %}
+    <div class="text-warning small" title="Possible duplicate listings">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      {{ similar|length }} similar listing{{ similar|length|pluralize }}
+    </div>
+  {% else %}
+    <div class="alert alert-warning" role="alert">
+      <h3 class="h6 mb-1">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Is this the same hardware as an existing listing?
+      </h3>
+      <p class="mb-2">
+        This submission created a new listing. If one of these is the same machine,
+        the catalog now has it twice, and each copy carries only half the evidence.
+      </p>
+      <ul class="mb-2">
+        {% for other, reason in similar %}
+          <li>
+            <a href="{% url 'hardware:detail' other.slug %}" target="_blank"
+               rel="noopener">{{ other.vendor.name }} {{ other.name }}</a>
+            <span class="text-secondary">({{ reason }}{% if not other.published %}, not published{% endif %})</span>
+          </li>
+        {% endfor %}
+      </ul>
+      <p class="mb-0 text-secondary small">
+        There is no merge tool. If this is a duplicate, send it back with a note
+        pointing at the existing listing; adding evidence to that one means running
+        the certification suite against it.
+      </p>
+    </div>
+  {% endif %}
+{% endif %}

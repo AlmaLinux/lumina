@@ -1,0 +1,48 @@
+{% comment %}Everything waiting on this person, in one place, at the top.
+
+The page already said what state each listing, run, and claim was in, per section. What it could not
+answer was the question somebody opens it with: is there anything for me to do. That answer was
+spread across five tables and three status vocabularies, so the way to find it was to read all of
+them and know which statuses meant "yours".
+
+Two rules keep it worth reading.
+
+Only things the reader can act on. A pending review is information, not a task; a quarantined run
+is waiting on a reviewer; rejected and approved are over. None of those appear here, and the
+per-section tables below still carry all of them. See ``_pending_actions`` for the full list of
+what is deliberately excluded and why.
+
+Nothing at all when there is nothing to do. No card, no "you are all caught up". This block is
+above everything else on a page people open routinely, and a region that is always present and
+usually says nothing is a region they learn to skip, which is the one thing a call to action
+cannot afford.{% endcomment %}
+{% if pending_actions %}
+  <div class="card border-warning mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h2 class="h5 card-title mb-0">
+        Waiting on you
+        <span class="badge text-bg-warning ms-1">{{ pending_actions|length }}</span>
+      </h2>
+    </div>
+    <div class="list-group list-group-flush">
+      {% for item in pending_actions %}
+        <div class="list-group-item d-flex justify-content-between align-items-start gap-3 flex-wrap">
+          <div class="flex-grow-1" style="min-width: 0">
+            <div class="text-secondary small text-uppercase">{{ item.category }}</div>
+            <div class="fw-medium">{{ item.title }}</div>
+            <div class="text-secondary small">{{ item.ask }}</div>
+            {% if item.note %}
+              {% comment %}The reviewer's own words, not a paraphrase. The whole point of sending
+                 something back is the sentence explaining what to change, and it lived only on a
+                 page the submitter had to think to open.{% endcomment %}
+              <div class="small mt-1"><em>&ldquo;{{ item.note }}&rdquo;</em></div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            <a class="btn btn-sm btn-primary" href="{{ item.url }}">{{ item.cta }}</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}

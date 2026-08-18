@@ -1,0 +1,42 @@
+{% comment %}Benchmark metrics for a run. Expects `benchmarks`.{% endcomment %}
+{% if benchmarks %}
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead><tr>
+      <th>Benchmark</th><th>Metric</th><th class="text-end">Value</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for b in benchmarks %}
+        <tr>
+          <td>
+            <a href="{% url 'benchmarks:leaderboard' b.benchmark_id %}?metric={{ b.metric }}">{{ b.display_label }}</a>
+            <span class="text-secondary small d-block">{{ b.benchmark_id }}</span>
+          </td>
+          <td>
+            {% comment %}The humanized name with the API as its own badge, because a CUDA figure and
+               an OpenCL figure for one card are measurements of different software stacks and a
+               table that does not say which is which cannot be read. The raw key stays underneath:
+               it is what a leaderboard URL pins and what somebody reproducing this needs.{% endcomment %}
+            {% if b.gpu_api_label %}
+              <span class="badge bg-purple-lt">{{ b.gpu_api_label }}</span>
+              {{ b.gpu_group_label }} · {{ b.gpu_tag_label }}
+              <span class="text-secondary small d-block">{{ b.metric }}</span>
+            {% else %}
+              {{ b.metric }}
+            {% endif %}
+            {% comment %}Names the card each figure came from, so a machine with more than one GPU
+               does not show rows that look identical. The ordinal only appears above 0, i.e. when
+               two identically named cards were benchmarked separately under --all-gpus.{% endcomment %}
+            {% if b.device_raw %}
+              <span class="badge bg-blue-lt">{{ b.device_model|default:b.device_raw }}{% if b.device_ordinal %} #{{ b.device_ordinal }}{% endif %}</span>
+            {% endif %}
+            {% if b.is_primary %} <span class="badge text-bg-info">primary</span>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">{{ b.display_value }} <span class="text-secondary">{{ b.unit }}</span></td>
+          <td class="text-secondary small">{% if b.direction == "higher_is_better" %}↑ better{% elif b.direction == "lower_is_better" %}↓ better{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
