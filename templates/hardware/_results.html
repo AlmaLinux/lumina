@@ -1,0 +1,53 @@
+{% if listings %}
+  <p class="text-secondary small mb-3">Showing {{ listings|length }} listing{{ listings|length|pluralize }}.</p>
+{% endif %}
+
+<div class="row row-cards">
+  {% for listing in listings %}
+    <div class="col-12">
+      <article class="card listing-card level-{{ listing.validation_level }}">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-3">
+            <div class="listing-logo flex-shrink-0">
+              {% if listing.vendor.logo %}
+                <img src="{{ listing.vendor.logo.url }}" alt="{{ listing.vendor.name }} logo">
+              {% else %}
+                <span class="listing-logo-fallback">{{ listing.vendor.name|slice:":1"|upper }}</span>
+              {% endif %}
+            </div>
+            <div class="flex-grow-1 min-w-0">
+              <h3 class="card-title mb-1">
+                <a class="text-reset listing-title" href="{% url 'hardware:detail' listing.slug %}">{{ listing.name }}</a>
+              </h3>
+              <div class="text-secondary small mb-2">
+                <strong>{{ listing.vendor.name }}</strong>{% if listing.model_number %} · {{ listing.model_number }}{% endif %}
+                {% if kind == "components" and listing.kind %}
+                  <span class="badge text-bg-light text-secondary ms-1">{{ listing.get_kind_display }}</span>
+                {% endif %}
+              </div>
+              {% if listing.description %}
+                <p class="mb-0 text-secondary" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                  {{ listing.description }}
+                </p>
+              {% endif %}
+            </div>
+            <div class="text-end flex-shrink-0">
+              <span class="badge badge-validation badge-{{ listing.validation_level }}">{{ listing.get_validation_level_display }}</span>
+              {% if listing.attestation_count > 1 %}
+                <div class="small text-secondary mt-1">× {{ listing.attestation_count }} attestations</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  {% empty %}
+    <div class="col-12">
+      <div class="empty">
+        <div class="empty-icon"><i class="ti ti-package-off"></i></div>
+        <p class="empty-title">No matching listings</p>
+        <p class="empty-subtitle text-secondary">Try a different search or clear filters.</p>
+      </div>
+    </div>
+  {% endfor %}
+</div>

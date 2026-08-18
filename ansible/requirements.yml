@@ -1,0 +1,15 @@
+---
+# Collections the playbooks need beyond ansible.builtin.
+#
+# Bounded below *and above*. An open-ended floor is what let CI resolve community.mysql 5.x, which
+# ships no modules at all: it is a redirect shim to ansible.mysql with removal_version 6.0.0. A local
+# lint against an older copy passed while CI failed on the canonical-name rule, which is the kind of
+# divergence a floor alone invites. Bump these deliberately.
+collections:
+  # mysql_db and mysql_user, for the dev host's database and its account. The canonical namespace:
+  # community.mysql is now a deprecated redirect to this.
+  - name: ansible.mysql
+    version: ">=4.2.0,<5.0.0"
+  # seboolean, used by the lumina role to let nginx reach the gunicorn socket.
+  - name: ansible.posix
+    version: ">=1.5.0,<3.0.0"

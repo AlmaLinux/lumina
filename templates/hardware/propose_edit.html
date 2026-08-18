@@ -1,0 +1,50 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Edit {{ listing.name }}{% endblock %}
+{% block page_subtitle %}<p class="text-secondary mb-0">Propose changes to <strong>{{ listing.vendor.name }} - {{ listing.name }}</strong>. All edits are reviewed by AlmaLinux before going live.</p>{% endblock %}
+{% block content %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  {% include "catalog/_form_errors.html" %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <p class="text-secondary small mb-3">Leave any field blank to keep the current value. Only changed fields will be applied on approval.</p>
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Name</label>
+          {{ form.name }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.model_number.id_for_label }}">Model number</label>
+          {{ form.model_number }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.vendor_spec_url.id_for_label }}">Vendor spec URL</label>
+          {{ form.vendor_spec_url }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+          {{ form.description }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.submitter_notes.id_for_label }}">Notes for the reviewer</label>
+          {{ form.submitter_notes }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-send me-1"></i>Submit for review</button>
+    {% comment %}A draft listing has no public page, and this form is reachable
+       for one - _get_listing_for_edit does not filter on published - so Cancel
+       falls back to the dashboard rather than 404ing whoever just cancelled.
+    {% endcomment %}
+    <a class="btn btn-outline-secondary"
+       href="{% if listing.published %}{% url 'hardware:detail' listing.slug %}{% else %}{% url 'accounts:dashboard' %}{% endif %}">Cancel</a>
+  </div>
+</form>
+
+{% endblock %}

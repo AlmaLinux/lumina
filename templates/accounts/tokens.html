@@ -1,0 +1,61 @@
+{% extends "base_admin.html" %}
+{% block page_title %}API tokens{% endblock %}
+{% block content %}
+
+{% if new_token_raw %}
+  <div class="alert alert-success">
+    <strong>Token created.</strong> Copy it now - it will not be shown again:
+    <div class="mt-2"><code class="user-select-all">{{ new_token_raw }}</code></div>
+  </div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-header"><h2 class="h5 card-title mb-0">Your tokens</h2></div>
+      {% if tokens %}
+        <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+          <thead><tr>
+            <th>Name</th><th>Scopes</th><th>Expires</th><th>Last used</th><th></th>
+          </tr></thead>
+          <tbody>
+            {% for token in tokens %}
+              <tr class="{% if not token.is_active %}text-secondary{% endif %}">
+                <td>{{ token.name }}{% if token.pk == new_token_id %} <span class="badge text-bg-success">new</span>{% endif %}</td>
+                <td>{% for scope in token.scopes %}<span class="badge text-bg-secondary">{{ scope }}</span> {% endfor %}</td>
+                <td>{% if token.revoked_at %}revoked{% elif token.expires_at %}{{ token.expires_at|date:"Y-m-d H:i" }}{% else %}never{% endif %}</td>
+                <td>{{ token.last_used_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="text-end">
+                  {% if token.is_active %}
+                    <form method="post" action="{% url 'accounts:token_revoke' token.pk %}">
+                      {% csrf_token %}
+                      <button class="btn btn-sm btn-outline-danger">Revoke</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}
+        <div class="card-body text-secondary">No tokens yet.</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-header"><h2 class="h5 card-title mb-0">Create a token</h2></div>
+      <div class="card-body">
+        <p class="text-secondary small">For the certification suite, prefer
+          <code>alma-cert register</code> - it issues a short-lived token without
+          copy/paste. Create one here for scripts or CI.</p>
+        <form method="post">
+          {% csrf_token %}
+          {{ form.as_p }}
+          <button class="btn btn-primary">Create token</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

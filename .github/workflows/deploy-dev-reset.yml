@@ -1,0 +1,51 @@
+name: Deploy dev (fresh database)
+
+# Drops the dev database, deploys, migrates from empty, and reseeds. Everything on the dev host goes:
+# every run, every listing, every submission somebody was part way through, and the demo accounts are
+# recreated with new passwords.
+#
+# Its own workflow rather than a checkbox on the ordinary deploy, for two reasons. A destructive
+# action should be something you go and find, not something adjacent to the thing you meant to click.
+# And keeping it out of deploy-dev.yml means the workflow that runs on every merge has no reset input
+# to set at all, so no misconfiguration there can wipe the database.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "wipe" to confirm destroying the dev database'
+        required: true
+        default: ''
+      ref:
+        description: Git ref to deploy (a branch, tag, or SHA)
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  # Its own job so the deploy does not start, and no secret is fetched, until the confirmation is
+  # right. A dispatch is a form somebody filled in quickly; this is the cost of getting it wrong.
+  confirm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "wipe" ]; then
+            echo "::error::Type wipe in the confirmation box to run this. Nothing has been changed."
+            exit 1
+          fi
+          echo "Confirmed. The dev database will be dropped and reseeded."
+
+  deploy:
+    needs: confirm
+    uses: ./.github/workflows/deploy-dev-run.yml
+    with:
+      ref: ${{ inputs.ref || 'dev' }}
+      # Seeding is implied by a reset and the reusable workflow sets it anyway; passed explicitly so
+      # reading this file tells you what happens without opening another one.
+      seed: true
+      reset: true
+    secrets: inherit

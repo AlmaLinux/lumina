@@ -1,0 +1,45 @@
+---
+# The management commands here load /etc/lumina.env before running.
+#
+# That file is the service's configuration: the systemd unit reads it through EnvironmentFile, and
+# ``lumina.settings.base`` reads nothing but ``os.environ``. A handler invoking manage.py directly is
+# therefore outside that path, and with only DJANGO_SETTINGS_MODULE set it falls back to every default
+# in base.py - DB_PASSWORD empty among them - so migrate cannot authenticate against any host whose
+# database has a password, which is every host. Sourcing the file rather than restating its variables
+# here keeps one source of truth: a new setting added to the template reaches these automatically.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Migrate lumina
+  ansible.builtin.shell:
+    cmd: >-
+      set -a && . /etc/lumina.env && set +a
+      && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py migrate --noinput
+  # A handler only runs because something notified it, and a migration that had nothing to apply is
+  # not worth reporting differently from one that did.
+  changed_when: true
+  become: true
+  become_user: "{{ lumina_user }}"
+
+- name: Collectstatic lumina
+  ansible.builtin.shell:
+    cmd: >-
+      set -a && . /etc/lumina.env && set +a
+      && exec {{ lumina_venv }}/bin/python {{ lumina_app_dir }}/manage.py collectstatic --noinput
+  environment:
+    # Not in the env file: only collectstatic needs it, and the service does not.
+    LUMINA_STATIC_ROOT: "{{ lumina_static_root }}"
+  changed_when: true
+  become: true
+  become_user: "{{ lumina_user }}"
+
+- name: Restart lumina
+  ansible.builtin.systemd:
+    name: lumina
+    state: restarted
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

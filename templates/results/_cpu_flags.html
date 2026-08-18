@@ -1,0 +1,47 @@
+{% load lumina_filters %}
+{% comment %}The CPU's advertised feature flags. Expects `run`.
+
+Collapsed by default, and for a reason: a current x86 CPU advertises 150-200 of
+these, so expanded they would be the longest thing on the page and push the run's
+actual results below the fold. Whether a machine has avx512f or sev_snp is worth
+looking up; it is not worth reading past every time.
+
+A native <details> element rather than a Bootstrap collapse, so it works with
+scripting off, keeps its own state, and is what a browser's in-page search will
+expand - Ctrl-F for "avx512f" finds it inside a closed <details> in current
+browsers, which a display:none collapse defeats.
+
+The grouped highlights come from the suite's own classification, carried on the
+informational `validate.cpu.flags` result. The full list comes from the inventory,
+which is present even for a collect-only run. See TestRun.cpu_flag_groups.
+{% endcomment %}
+{% if run.cpu_flags %}
+  <dt class="col-sm-3">CPU flags</dt>
+  <dd class="col-sm-9">
+    <details class="lumina-flags">
+      <summary>
+        {{ run.cpu_flags|length }} feature flag{{ run.cpu_flags|length|pluralize }}
+        <span class="text-secondary small">(informational)</span>
+      </summary>
+      {% if run.cpu_flag_groups %}
+        <dl class="row mb-2 mt-2 small">
+          {% for group, found in run.cpu_flag_groups.items %}
+            {% comment %}Underscores to spaces, so "confidential_computing" reads
+               as a label rather than as an identifier. The key itself stays
+               snake_case wherever it is data - the report and the API.{% endcomment %}
+            <dt class="col-sm-4 fw-normal text-secondary">
+              {{ group|unslug|capfirst }}
+            </dt>
+            <dd class="col-sm-8 mb-1">
+              {% for flag in found %}<code class="me-1">{{ flag }}</code>{% endfor %}
+            </dd>
+          {% endfor %}
+        </dl>
+      {% endif %}
+      <div class="text-secondary small mt-2">All flags, as reported:</div>
+      <div class="lumina-flags-all small">
+        {% for flag in run.cpu_flags %}<code class="me-1">{{ flag }}</code>{% endfor %}
+      </div>
+    </details>
+  </dd>
+{% endif %}

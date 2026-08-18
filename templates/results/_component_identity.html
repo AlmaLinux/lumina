@@ -1,0 +1,72 @@
+{% comment %}What a component *is*: the catalog match, or the boxes to describe a new part.
+
+Shared by the submitter's listing-details form and the reviewer's tie editor, because it is the
+same job from two seats and the fields behind it come from one mixin. A second copy is how the
+two drift into offering different controls over the same data.
+
+Two shapes, mirroring the machine's identity card:
+
+- **Matched** - suggest the match and keep the boxes collapsed behind an override. Two prefilled
+  text boxes over an entry the catalog already holds read as an invitation to retype it, and one
+  stray character mints "Intel Core i3-10100T " beside the real thing.
+- **New, or already corrected** - the boxes, because describing the part is the whole point
+  there, and a row somebody already corrected stays open so they can keep editing or undo it by
+  retyping what the report said.
+
+Requires `entry` and `counter` (unique per row, for the ids).
+{% endcomment %}
+{% if entry.edit_field %}
+  <div class="mt-1">
+    {% comment %}Same mechanism as the identity override: the reveal is CSS off this checkbox's
+       own :checked state, so the control that opens the boxes is the value that posts and the
+       two cannot disagree. `.visually-hidden` keeps it focusable, so space still toggles it
+       from the keyboard.{% endcomment %}
+    <input type="checkbox" name="{{ entry.edit_field.name }}" value="1"
+           id="tie-edit-{{ counter }}" class="reveal-toggle visually-hidden">
+    <label class="btn btn-sm btn-link px-0 align-baseline" for="tie-edit-{{ counter }}">
+      <span class="reveal-when-closed">Not this part? Correct it</span>
+      <span class="reveal-when-open">Keep the catalog match</span>
+    </label>
+    <div class="reveal-fields row g-2">
+      <div class="col-sm-5">
+        <label class="form-label small mb-0"
+               for="{{ entry.brand_field.id_for_label }}">Vendor</label>
+        {{ entry.brand_field }}
+      </div>
+      <div class="col-sm-7">
+        <label class="form-label small mb-0"
+               for="{{ entry.model_field.id_for_label }}">Model</label>
+        {{ entry.model_field }}
+      </div>
+      <div class="col-12">
+        <span class="text-secondary small">
+          Correcting this detaches the run from
+          <strong>{{ entry.component }}</strong>. Leave it alone to attest that entry.
+        </span>
+      </div>
+    </div>
+  </div>
+{% elif entry.brand_field %}
+  {% comment %}Suggestible on both boxes, so a correction reuses an existing entry rather than
+     minting a near-duplicate beside it.{% endcomment %}
+  <div class="row g-2 mt-1">
+    <div class="col-sm-5">
+      <label class="form-label small mb-0"
+             for="{{ entry.brand_field.id_for_label }}">Vendor</label>
+      {{ entry.brand_field }}
+    </div>
+    <div class="col-sm-7">
+      <label class="form-label small mb-0"
+             for="{{ entry.model_field.id_for_label }}">Model</label>
+      {{ entry.model_field }}
+    </div>
+    {% if entry.overridden %}
+      <div class="col-12">
+        <span class="text-secondary small">
+          Corrected. The report said
+          <em>{{ entry.reported_brand }} {{ entry.reported_model }}</em>.
+        </span>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}

@@ -1,0 +1,57 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Authorize a machine{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4 mb-3">Authorize a machine</h1>
+
+        {% if locked_out %}
+          <div class="alert alert-danger mb-0">
+            Too many attempts. Try again in 15 minutes.
+          </div>
+        {% elif device_request %}
+          <p>You are about to let this machine submit certification results
+            <strong>as {{ request.user.get_username }}</strong>:</p>
+          <div class="table-responsive"><table class="table table-sm">
+            <tr><th>Client</th><td>{{ device_request.client_name }}</td></tr>
+            <tr><th>Hostname</th><td>
+              {% if device_request.hostname %}
+                <code>{{ device_request.hostname }}</code>
+              {% else %}<span class="text-secondary">not reported</span>{% endif %}
+            </td></tr>
+            <tr><th>Requesting IP</th><td>{{ device_request.requester_ip|default:"unknown" }}</td></tr>
+            <tr><th>Code</th><td><code>{{ device_request.user_code }}</code></td></tr>
+            <tr><th>Requested</th><td>{{ device_request.created_at|timesince }} ago</td></tr>
+          </table></div>
+          <p class="text-secondary small">The machine receives a submit-only
+            token valid for 12 hours. It cannot read your account or change
+            anything else{% if device_request.hostname %}, and results it
+            posts must come from <code>{{ device_request.hostname }}</code>{% endif %}.</p>
+          <form method="post" action="{% url 'accounts:activate_confirm' device_request.pk %}" class="d-flex gap-2">
+            {% csrf_token %}
+            <button name="decision" value="approve" class="btn btn-primary">Authorize</button>
+            <button name="decision" value="deny" class="btn btn-outline-danger">Deny</button>
+          </form>
+        {% else %}
+          <p class="text-secondary">Run <code>alma-cert register</code> on the machine
+            under test, then enter the code it shows here.</p>
+          <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+              {{ form.user_code.label_tag }}
+              {{ form.user_code }}
+              {% for error in form.user_code.errors %}
+                <div class="text-danger small mt-1">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <button class="btn btn-primary">Continue</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

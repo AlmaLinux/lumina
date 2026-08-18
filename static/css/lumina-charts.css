@@ -1,0 +1,278 @@
+/* Charts for the hardware survey statistics page.
+ *
+ * Colours are AlmaLinux brand hues (https://almalinux.org/branding/) snapped to steps
+ * that are legible as a 2px stroke on a light surface. The brand values themselves are
+ * not usable as series colours: brand green sits at OKLab L=0.71 and brand yellow at
+ * L=0.86, giving 2.4:1 and 1.5:1 against white, well under the 3:1 needed for a
+ * graphical object. So each series keeps its brand hue angle and takes a darker step.
+ *
+ * The series count is a measured limit, not a layout choice. Checking every pair for
+ * separation in OKLab, under simulated protanopia, deuteranopia, and tritanopia, the
+ * brand hues support exactly THREE chromatic series alongside the neutral remainder:
+ *
+ *   - brand red and brand yellow are indistinguishable to a red-green colour-blind
+ *     reader (dE 0.8 of a required 8), so they can never both be series colours
+ *   - adding any fourth chromatic step to the set below drops some pair below the floor
+ *
+ * Every pair of the four below clears dE 15.1 under the worst simulation and 18.3 for
+ * normal vision. A fourth series would have to be an invented hue or a confusable one,
+ * so a fourth bucket folds into "Other" instead. Dimensions with many buckets get a
+ * sparkline per row rather than more lines: one series each, so no separation is needed.
+ *
+ * Identity is never carried by colour alone: every trend line is directly labelled at
+ * its end, a legend names each series, and the same numbers are in a table below.
+ */
+
+:root {
+    /* Brand hue angles: yellow 90, green 133, blue 257. */
+    --chart-series-0: #b6900a;  /* gold  */
+    --chart-series-1: #2c5400;  /* green */
+    --chart-series-2: #4694fe;  /* blue  */
+    --chart-series-3: #6b7785;  /* the folded remainder, deliberately achromatic */
+
+    /* One hue for magnitude: a ranked bar says "how much", never "which one". */
+    --chart-bar: #0069da;
+    --chart-bar-track: #e9eef4;
+
+    /* Recessive furniture. Grid and axis ink must not compete with the data. */
+    --chart-grid: #dde3ea;
+    --chart-axis-ink: #6b7785;
+    --chart-surface: #ffffff;
+
+    /* Movement. Distinct from the series palette, and never a series colour: these
+     * answer "which way", which is a different question from "which one". */
+    --chart-up: #157347;
+    --chart-down: #b02a37;
+}
+
+/* --- the at-a-glance band ------------------------------------------------- */
+/*
+ * Four answers and a count, before any chart. A headline figure needs no plot, and a
+ * page that opens on a wall of bar rows makes a reader work to find what they came for.
+ * Auto-fit rather than a fixed column count, so the band reflows to one, two, or five
+ * across without a breakpoint per case.
+ */
+
+.stat-band {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1rem;
+}
+
+.stat-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 1rem 1.1rem;
+    background: var(--chart-surface);
+    border: 1px solid var(--chart-grid);
+    border-radius: 6px;
+    /* A quiet left rail, in the same blue the bars use, so the band reads as one object
+     * rather than five loose boxes. */
+    border-left: 3px solid var(--chart-bar-track);
+}
+
+/* One tile carries the count everything else is a share of, so it gets the accent. */
+.stat-tile-lead { border-left-color: var(--chart-bar); }
+
+.stat-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--chart-axis-ink);
+}
+
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+}
+
+/* A vendor name is not a number and does not want number sizing. Clamped to two lines
+ * so one long GPU string cannot make its tile twice the height of its neighbours. */
+.stat-value-text {
+    font-size: 1.0625rem;
+    line-height: 1.25;
+    font-variant-numeric: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.stat-note {
+    font-size: 0.8125rem;
+    color: var(--chart-axis-ink);
+}
+
+/* --- section headings ----------------------------------------------------- */
+
+.section-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding-bottom: 0.4rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--chart-grid);
+}
+
+.section-heading-note {
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: var(--chart-axis-ink);
+}
+
+.chart-table { font-variant-numeric: tabular-nums; }
+
+/* --- ranked distribution rows --------------------------------------------- */
+
+.chart-rows {
+    display: grid;
+    /* bucket | bar | share | change | sparkline
+     *
+     * The bucket takes the slack and the other four are held near their content width.
+     * Two of these cards sit side by side, so at laptop width each has about 440px to
+     * work with: giving the bar a 7rem maximum left the label under 8rem and truncated
+     * "512-1024 GB", which is not a long string. The bar only has to be comparable
+     * between rows, not large. */
+    grid-template-columns: minmax(7rem, 1fr) minmax(2.5rem, 5rem) 3.75rem 3.25rem 3.25rem;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart-rows > .chart-label {
+    min-width: 0;               /* so text-overflow works inside a grid track */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chart-bar-track {
+    /* Block, not inline: these are spans, and an inline box ignores height, which
+     * renders the whole column as empty track with no bar in it. */
+    display: block;
+    background: var(--chart-bar-track);
+    border-radius: 2px;
+    height: 8px;
+    overflow: hidden;
+}
+
+.chart-bar-fill {
+    display: block;
+    background: var(--chart-bar);
+    height: 100%;
+    /* Rounded only at the data end, anchored to the baseline at the other. */
+    border-radius: 0 2px 2px 0;
+}
+
+.chart-share {
+    text-align: right;
+    font-weight: 600;   /* the number the row exists to state */
+}
+
+.chart-change { text-align: right; font-size: 0.8125rem; }
+.chart-change.is-up { color: var(--chart-up); }
+.chart-change.is-down { color: var(--chart-down); }
+.chart-change.is-flat { color: var(--chart-axis-ink); }
+
+.chart-spark { display: block; width: 100%; height: 28px; }
+.chart-spark polyline {
+    fill: none;
+    stroke: var(--chart-axis-ink);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+/* Narrow screens drop the two columns that are commentary rather than the answer.
+ * The share and the bar are the data; movement and history are in the table view.
+ * ``chart-change-note`` is the sentence that promises a change column, and goes with
+ * it: a subtitle describing a column that is not on screen is worse than no subtitle. */
+@media (max-width: 575.98px) {
+    .chart-rows { grid-template-columns: minmax(6rem, 1fr) minmax(3rem, 1fr) 3.75rem; }
+    .chart-rows > .chart-change,
+    .chart-rows > .chart-spark-cell { display: none; }
+    .chart-change-note { display: none; }
+}
+
+/* --- trend chart ---------------------------------------------------------- */
+
+.chart-trend { display: block; width: 100%; height: auto; }
+
+/* The end-label font stays FIXED across breakpoints, and that is load-bearing. Whether
+ * two stacked labels collide is a question of gap against font size in viewBox units:
+ * the render scale multiplies both and cancels out. The gap is computed on the server
+ * (_LABEL_GAP in lumina/survey/stats.py), which cannot know the viewport, so a font
+ * that changed per breakpoint could always be made to overlap. One size, one gap.
+ *
+ * Axis ticks may grow on narrow screens because they are spread along the axis and
+ * cannot stack. End labels are dropped there instead: a 720-unit box drawn at 340px
+ * renders 16 units as 7px, which is not readable at any spacing, and identity is still
+ * carried by the legend and the table below. */
+@media (max-width: 575.98px) {
+    .chart-trend .chart-tick { font-size: 21px; }
+    .chart-trend .chart-end-label { display: none; }
+}
+
+.chart-trend .chart-gridline {
+    stroke: var(--chart-grid);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.chart-trend .chart-tick,
+.chart-trend .chart-end-label {
+    fill: var(--chart-axis-ink);
+    /* viewBox units, so it scales with the chart: the card draws the 720-unit box at
+     * roughly 600px, which renders 16 as about 13 pixels. _LABEL_GAP in
+     * lumina/survey/stats.py is set against this and the two must move together. */
+    font-size: 16px;
+}
+
+.chart-trend .chart-line {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.chart-trend .chart-point {
+    /* A 2px ring in the surface colour, so a crossing reads as two lines and not one. */
+    stroke: var(--chart-surface);
+    stroke-width: 2;
+}
+
+.series-0 { stroke: var(--chart-series-0); fill: var(--chart-series-0); }
+.series-1 { stroke: var(--chart-series-1); fill: var(--chart-series-1); }
+.series-2 { stroke: var(--chart-series-2); fill: var(--chart-series-2); }
+.series-3 { stroke: var(--chart-series-3); fill: var(--chart-series-3); }
+
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    font-size: 0.8125rem;
+}
+
+.chart-legend .chart-swatch {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.25rem;
+    border-radius: 2px;
+    vertical-align: 0.15em;
+    margin-right: 0.35rem;
+}
+.chart-legend .swatch-0 { background: var(--chart-series-0); }
+.chart-legend .swatch-1 { background: var(--chart-series-1); }
+.chart-legend .swatch-2 { background: var(--chart-series-2); }
+.chart-legend .swatch-3 { background: var(--chart-series-3); }
+
+/* Forced-colours mode replaces every colour above, so identity falls back to the
+ * direct labels and the legend text, which are always present. */
+@media (forced-colors: active) {
+    .chart-bar-fill, .chart-legend .chart-swatch { forced-color-adjust: none; }
+}

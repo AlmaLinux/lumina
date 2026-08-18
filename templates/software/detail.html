@@ -1,0 +1,112 @@
+{% extends "base_public.html" %}
+{% block title %}{{ software.name }} - AlmaLinux software catalog{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'core:home' %}">Catalog</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'software:browse' %}">Software</a></li>
+  <li class="breadcrumb-item active">{{ software.name }}</li>
+</ol>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+      <div>
+        <div class="text-secondary small">{{ software.vendor.name }}</div>
+        <h1 class="h2 mb-2">{{ software.name }}</h1>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          {% for binding in software.category_values.all %}
+            <span class="badge bg-secondary-lt">{{ binding.value.value }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="text-end">
+        <span class="badge badge-validation badge-{{ software.validation_level }} fs-5">
+          {{ software.get_validation_level_display }}
+        </span>
+        <div class="mt-2 d-flex flex-wrap gap-2 justify-content-end">
+          {% if software.homepage_url %}
+            <a class="btn btn-outline-primary btn-sm" href="{{ software.homepage_url }}">
+              <i class="ti ti-external-link me-1"></i>Website
+            </a>
+          {% endif %}
+          {% if software.documentation_url %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ software.documentation_url }}">
+              <i class="ti ti-book me-1"></i>Docs
+            </a>
+          {% endif %}
+          {% if user_can_edit %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{% url 'software:propose_edit' software.slug %}">
+              <i class="ti ti-edit me-1"></i>Propose edit
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    {% if software.description %}
+      <div class="card mb-3">
+        <div class="card-header"><h2 class="card-title">Overview</h2></div>
+        <div class="card-body"><p class="mb-0">{{ software.description }}</p></div>
+      </div>
+    {% endif %}
+
+    {% comment %}The point of the whole subsystem. One row per cited AlmaLinux
+       major, each with its own tier and its own confirmation count, so a vendor
+       who certified once and stopped cannot leave a listing that reads as
+       currently certified.{% endcomment %}
+    {% include "catalog/_compatibility_card.html" with rows=compatibility row_template="software/_compatibility_row.html" columns=software_compatibility_columns empty_message="No AlmaLinux releases cited yet." note=software_compatibility_note %}
+
+    {% if request.user.is_authenticated and reportable_releases %}
+      {% comment %}The one control here that is not a single click, because it adds
+         a release to someone else's listing rather than agreeing with one already
+         on it. Bounded to supported releases this listing does not already cite,
+         so it can neither invent a release nor duplicate a row.{% endcomment %}
+      <div class="card mb-3">
+        <div class="card-body">
+          <h2 class="h6">Works on a release that is not listed?</h2>
+          <p class="text-secondary small">
+            Tell us and a reviewer will check it. This is how a product keeps up
+            with a new AlmaLinux release when its vendor has not got there yet.
+          </p>
+          <form method="post" action="{% url 'software:report_major' software.slug %}"
+                class="d-flex gap-2 align-items-end flex-wrap">
+            {% csrf_token %}
+            <div>
+              <label class="form-label" for="report-release">AlmaLinux release</label>
+              <select class="form-select" id="report-release" name="release">
+                {% for release in reportable_releases %}
+                  <option value="{{ release.major }}">{{ release }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button class="btn btn-outline-primary">Report it works</button>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <aside class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><h2 class="card-title">Publisher</h2></div>
+      <div class="card-body">
+        {% include "catalog/_vendor_card.html" with vendor=software.vendor vendor_claimable=vendor_claimable only %}
+      </div>
+    </div>
+    {% if software.support_url %}
+      <div class="card mt-3">
+        <div class="card-body">
+          <a href="{{ software.support_url }}"><i class="ti ti-lifebuoy me-1"></i>Support</a>
+        </div>
+      </div>
+    {% endif %}
+  </aside>
+</div>
+
+{% endblock %}

@@ -1,0 +1,97 @@
+{% load lumina_filters %}
+{% comment %}One AlmaLinux release of one hardware listing.
+
+Two separate columns of evidence: who *asserted* the certification, and what the
+community confirmed on top of it. Hardware stores both in one table told apart by
+tier, so a single derived badge plus one total credited the vendor with the
+community's runs and hid the community's contribution inside a number that looked
+like part of the certification.
+
+No control column, unlike software's row. Attesting to hardware means running the
+suite, so there is nothing to click here.
+{% endcomment %}
+<tr>
+  <td class="fw-medium">
+    {{ row.display }}
+    {% comment %}The timing gate, published rather than hidden. Evidence from AlmaLinux Kitten
+       proves the major but the hardware enablement lands in an upcoming minor, and a reader
+       looking for this machine is better served by "works from 10.3" than by an entry that is
+       not there. Derived at display time from the release's ``latest_minor``, so an
+       administrator raising that number is the single action that clears this note from every
+       listing waiting on the same minor - nothing has to be scheduled, and nothing goes stale.
+    {% endcomment %}
+    {% if row.pending_minor %}
+      <span class="badge text-bg-warning ms-1">from
+        {{ row.release.major }}.{{ row.pending_minor }}</span>
+      <span class="d-block text-secondary small">{{ row.disclaimer }}</span>
+    {% endif %}
+  </td>
+  <td>
+    {% comment %}Official assertions listed individually, because a release can be
+       certified by its vendor *and* by the Foundation and one badge would throw
+       away half of that.
+
+       Three fallbacks, not one. No official assertion but community evidence reads
+       Community. Nothing at all but a vendor's word reads declared. A run-proven
+       release with no surviving attestation is a real third case: before validation
+       became per release, a repeat run by the same person recorded nothing, so older
+       releases can be proven with no row to name a tier - and calling that
+       "declared" would contradict its own source.
+
+       Short labels, because the column header is already "Certified by". No inline
+       conditional on the tier: ``level_short`` is the one mapping.{% endcomment %}
+    {% for level in row.official_levels %}
+      <span class="badge badge-validation badge-{{ level }} me-1">
+        {{ level|level_short }}
+      </span>
+    {% empty %}
+      {% if row.validation_level %}
+        <span class="badge badge-validation badge-community">Community</span>
+      {% elif row.source != "declared" %}
+        <span class="text-secondary">Proven by a run, tier not recorded</span>
+      {% endif %}
+    {% endfor %}
+    {% comment %}Provenance, independent of tier, and deliberately not an arm of the
+       fallback above.
+
+       It used to be one, which meant it could only ever show on a row that had no
+       tier at all - so the moment a declared row gained a community attestation
+       (which is exactly what accepting a manual submission does) the marker vanished
+       and the row rendered as a bare "Community" badge, visually identical to a
+       release a validation run had proven. The footnote further down this page
+       promising that unproven releases are marked was then dangling.
+
+       Tier and evidence are two different facts. A row can have a tier *and* be
+       unproven, and for a declared listing that is the normal case, not an edge one.
+    {% endcomment %}
+    {% if row.source == "declared" %}
+      <span class="text-secondary d-block small"
+            title="Nobody has run the certification suite on this release yet">
+        Declared, not yet validated
+      </span>
+    {% endif %}
+  </td>
+  <td class="text-nowrap">
+    {% comment %}The count links to the evidence behind it: the certification
+       results table further down, filtered to this release. The two halves of the
+       page were otherwise left for the reader to correlate by eye.
+
+       A plain link with a query parameter and a fragment, so it is shareable,
+       survives a reload, and works with scripting off - the filtering it triggers
+       happens on the server.
+
+       No link when there is nothing to count. The results card carries its own
+       release filter for anyone who wants that release's runs anyway.
+    {% endcomment %}
+    {% with confirmations=row.community_confirmations %}
+      {% if confirmations %}
+        <a href="?cert_alma={{ row.release.major }}#certification-results"
+           title="Show the validation runs for AlmaLinux {{ row.release.major }}">
+          {{ confirmations }} confirmation{{ confirmations|pluralize }}
+        </a>
+      {% else %}
+        <span class="text-secondary">none yet</span>
+      {% endif %}
+    {% endwith %}
+  </td>
+</tr>

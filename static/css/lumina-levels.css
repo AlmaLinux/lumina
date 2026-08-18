@@ -1,0 +1,61 @@
+/* Validation tiers: one definition, loaded by both base templates.
+ *
+ * The trust tiers are one vocabulary. They were defined twice - once in
+ * lumina-public.css and once in lumina-admin.css - and the two had drifted into
+ * different palettes, so the same badge rendered differently depending on which
+ * page you were on. AlmaLinux-validated was brand green on the public catalog and
+ * #831883 purple in the admin, which is not a brand colour at all. The admin copy
+ * even carried the comment "shared with public side colors".
+ *
+ * Deliberately self-contained. The two stylesheets name the same brand colours
+ * differently (--alx-black-pearl versus --alx-navy, --alx-blue-dark versus
+ * --alx-blue-hover), so this file cannot rely on either being loaded first and
+ * declares the values it needs itself. Load it after the framework CSS and before
+ * the app stylesheet, so an app-specific override still wins.
+ *
+ * Colours are from the AlmaLinux brand book (https://almalinux.org/branding/).
+ */
+
+:root {
+    /* Brand values this file needs, restated so it stands alone. */
+    --lumina-brand-black-pearl: #082336;
+    --lumina-brand-blue: #0069da;        /* Science blue */
+    --lumina-brand-green-dark: #68bc11;  /* Darker green */
+    --lumina-brand-lighter-pearl: #264154;
+
+    /* Tier tokens. Ordered community -> almalinux -> vendor, matching
+     * core.certification.LEVEL_RANK: vendor is the strongest, because the party
+     * that builds the thing is the one that has to keep supporting it. */
+    --lumina-level-community: var(--lumina-brand-lighter-pearl);
+    --lumina-level-almalinux: var(--lumina-brand-green-dark);
+    --lumina-level-vendor: var(--lumina-brand-blue);
+}
+
+.badge-validation {
+    font-size: 0.75rem;
+    padding: 0.4em 0.7em;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.badge-community {
+    background-color: var(--lumina-level-community);
+    color: #fff;                     /* 10.68:1 */
+}
+
+.badge-vendor {
+    background-color: var(--lumina-level-vendor);
+    color: #fff;                     /* 5.21:1 */
+}
+
+/* Dark text, not white. The brand's darker green is light enough that white on it
+ * measures 2.39:1 - well under the 4.5:1 WCAG AA needs for text this size, and the
+ * badge was effectively unreadable. Black Pearl on the same green is 6.74:1.
+ *
+ * The foreground changes rather than the background: neither brand green is dark
+ * enough for white text, and darkening one to suit would put an unapproved colour
+ * on the most authoritative badge in the catalog. */
+.badge-almalinux {
+    background-color: var(--lumina-level-almalinux);
+    color: var(--lumina-brand-black-pearl);
+}

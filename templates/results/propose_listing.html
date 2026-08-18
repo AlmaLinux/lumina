@@ -1,0 +1,429 @@
+{% extends "base_public.html" %}
+{% load static %}
+{% block title %}Review this submission - AlmaLinux Hardware Catalog{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="mb-3">
+      <h1 class="h3 mb-1">Review this submission</h1>
+      <p class="text-secondary">
+        {% if subject == "motherboard" %}
+          Your run identified the motherboard
+          <strong>{{ run.board_vendor }} {{ run.board_model }}</strong>. On a custom
+          build the board identifies the machine, which the catalog lists as a system.
+          {% if generic_reported %}Your firmware reported a generic product line
+          (<strong>{{ run.system_vendor }} {{ run.system_product }}</strong>) rather than a
+          specific model, so the machine is listed by its board. If it has a real vendor model
+          number that the firmware did not report, enter that as the name below instead.{% endif %}
+        {% elif subject == "machine" %}
+          This machine's firmware does not report its manufacturer or model, so
+          everything below has to come from you.
+        {% else %}
+          Your run identified a
+          <strong>{{ run.system_vendor }} {{ run.system_product }}</strong>.
+        {% endif %}
+        The run proves the hardware works; these fields are what it cannot know,
+        prefilled with what it did detect. <strong>Correct anything that is
+        wrong</strong> - firmware regularly reports a machine-type code where the
+        model should be, or leaves the manufacturer as "OEM". A reviewer approves
+        your answers together with the run.
+      </p>
+    </div>
+    {% comment %}Identified so a test can find *this* form. Anchoring on the first
+       `<form method="post"` in the page found the nav's sign-out form instead, and the
+       no-nested-forms guard was silently checking that one - the same mistake it exists to
+       catch.{% endcomment %}
+    <form method="post" id="listing-details">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+
+      {% comment %}Two shapes, one set of fields.
+
+         The submitter who may restate the machine gets them as a plain card. Everybody else
+         gets the message plus an override, because the identity is theirs to dispute but not
+         to rewrite: a community member re-running the suite on a catalogued machine is
+         producing evidence about that listing, not a redescription of it.
+
+         The override is a checkbox, and the fields are revealed by CSS from its checked
+         state, so the thing that opens the block *is* the thing that posts - they cannot
+         disagree. It was a button posting to its own endpoint, which had to sit inside this
+         form and so became a nested <form>: browsers ignore the inner one, so pressing it
+         submitted this form with the identity fields absent, blanking them and never setting
+         the flag. Reported as all three at once.
+
+         ``form.identity_locked`` is False once the run is disputed, so the block above takes
+         over on the next load and the undo lives there.{% endcomment %}
+      {% if not form.identity_locked %}
+        <div class="card mb-3">
+          <div class="card-header"><h2 class="card-title">Identity</h2></div>
+          <div class="card-body">
+            {% if run.identity_disputed %}
+              <p class="text-secondary small">
+                You have said this is not
+                <strong>{{ run.system_vendor }} {{ run.system_product }}</strong> as the
+                catalog knows it, so approving this run creates a new listing from what you
+                enter here.
+                <button class="btn btn-link btn-sm px-0 align-baseline"
+                        name="undo_identity_dispute" value="1">
+                  Actually, it is that machine
+                </button>
+              </p>
+            {% endif %}
+            {% for field in form.identity_rows %}
+              {% include "results/_form_field.html" %}
+            {% endfor %}
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-secondary" role="note">
+          <h2 class="h6 mb-1">
+            {% if linked_listing %}{{ linked_listing }}{% else %}This machine{% endif %}
+          </h2>
+          <p class="mb-0">
+            Already in the catalog and maintained by
+            {% if linked_listing.vendor %}{{ linked_listing.vendor }}{% else %}its
+            vendor{% endif %}, so its details are not yours to change. You are here for the
+            components below.
+          </p>
+        </div>
+
+        <div class="identity-override mb-3">
+          {% comment %}Unlabelled by a <label> element on purpose: the label *is* the button
+             below, and Tabler's .visually-hidden keeps the input focusable so space still
+             toggles it from the keyboard.{% endcomment %}
+          <input type="checkbox" name="identity_disputed" value="1"
+                 id="id_identity_disputed" class="reveal-toggle visually-hidden"
+                 {% if form.identity_disputed.value %}checked{% endif %}>
+          <label class="btn btn-sm btn-outline-secondary" for="id_identity_disputed">
+            <span class="reveal-when-closed">This is not that machine</span>
+            <span class="reveal-when-open">Never mind, it is that machine</span>
+          </label>
+          <div class="reveal-fields card mt-2">
+            <div class="card-header"><h2 class="card-title">Identity</h2></div>
+            <div class="card-body">
+              <p class="text-secondary small">
+                Describe the machine you actually ran on. Approving this run will create a
+                listing of its own instead of adding evidence to
+                {% if linked_listing %}{{ linked_listing }}{% else %}the matched
+                listing{% endif %}.
+              </p>
+              {% for field in form.identity_rows %}
+                {% include "results/_form_field.html" %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {% if form.cpu_rows %}
+        <div class="card mb-3">
+          <div class="card-header"><h2 class="card-title">Processor</h2></div>
+          <div class="card-body">
+            {% for field in form.cpu_rows %}
+              {% include "results/_form_field.html" %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if form.release_rows %}
+        <div class="card mb-3">
+          <div class="card-header">
+            <h2 class="card-title">AlmaLinux compatibility</h2>
+          </div>
+          <div class="card-body">
+            <p class="text-secondary small">
+              {% comment %}A minor dropdown sat beside each box, and the copy explained
+                 floors. Certification is per major now, matching the software catalog: a
+                 pass on 9.6 certifies AlmaLinux 9. The minor each run passed on is still
+                 recorded on the run itself.{% endcomment %}
+              Every major you have a run of this machine for is ticked already and recorded
+              as evidence. Tick others only if you know the hardware supports them - those
+              are your statement rather than something a run proved.
+            </p>
+            {% for release, supported in form.release_rows %}
+              <div class="form-check mb-2">
+                {{ supported }}
+                <label class="form-check-label" for="{{ supported.id_for_label }}">
+                  {{ release }}
+                </label>
+                {% if supported.help_text %}
+                  <div class="form-text">{{ supported.help_text }}</div>
+                {% endif %}
+              </div>
+              {% for error in supported.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if form.embargo_rows or form.publication_rows %}
+        {% comment %}Reviewable here because this is the page somebody reads before handing the
+           run to a reviewer, and that is the last moment either value can be changed without
+           help. Both arrive at ingest - from the CLI's run metadata or the web upload form -
+           and the submitter could previously only see the result as a line on the run page, so
+           a missed flag or a mistyped date had nowhere to be fixed.{% endcomment %}
+        <div class="card mb-3">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Publication</h2>
+              <p class="card-subtitle text-secondary small mb-0 mt-1">
+                {% comment %}Two gates, held apart. Secrecy is the submitter's to declare;
+                   timing follows from what the run ran on, so it is only mentioned when it
+                   applies. Both can be in force at once and each lifts on its own
+                   schedule.{% endcomment %}
+                {% if run.ran_on_prerelease_os %}
+                  This run was on <strong>AlmaLinux Kitten</strong>, so the major is proved but
+                  the enablement lands in a later minor. Say which, and the listing publishes
+                  with a note until that minor ships.
+                {% elif run.pre_release %}
+                  This run is marked as unreleased hardware. Check that is still right.
+                {% else %}
+                  Set from the command line or the upload form, and correctable here.
+                {% endif %}
+              </p>
+            </div>
+          </div>
+          <div class="card-body">
+            {% comment %}The publish date only means anything once "unreleased hardware" is ticked -
+               the two are coupled server-side too (RunListingProposalForm.clean). So the checkbox is
+               the reveal toggle and the date is folded into a following ``.reveal-fields`` sibling,
+               shown only when it is checked - the CSS-only disclosure the identity override uses, so
+               it keeps working with no JavaScript. ``available_from_minor``, when the run offers it,
+               is not gated: the listing publishes either way, so it renders on its own.{% endcomment %}
+            {% for field in form.embargo_rows %}
+              {% if field.name == "pre_release" %}
+                <div class="mb-3">
+                  <div class="form-check">
+                    {{ field }}
+                    <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+                    {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                    <div class="reveal-fields mt-2">
+                      {% with field=form.publish_requested_date %}
+                        {% include "results/_form_field.html" %}
+                      {% endwith %}
+                    </div>
+                  </div>
+                </div>
+              {% elif field.name == "publish_requested_date" %}
+                {# rendered inside the reveal-fields above, so it shows only when unreleased is ticked #}
+              {% else %}
+                {% include "results/_form_field.html" %}
+              {% endif %}
+            {% endfor %}
+            {% comment %}Attribution, after the two secrecy gates and outside the reveal: it
+               applies to every run whether or not anything is being held back.{% endcomment %}
+            {% for field in form.publication_rows %}
+              <div class="form-check">
+                {{ field }}
+                <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+                {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if form.category_rows %}
+        <div class="card mb-3">
+          <div class="card-header"><h2 class="card-title">Classification</h2></div>
+          <div class="card-body">
+            {% for category, field, propose in form.category_rows %}
+              {% include "results/_form_field.html" %}
+              {% if propose %}
+                {% with field=propose %}
+                  {% include "results/_form_field.html" %}
+                {% endwith %}
+              {% endif %}
+              {% if not forloop.last %}<hr class="my-3">{% endif %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if form.attribution_rows %}
+        <div class="card mb-3">
+          <div class="card-header"><h2 class="card-title">Attribution</h2></div>
+          <div class="card-body">
+            {% for field in form.attribution_rows %}
+              {% include "results/_form_field.html" %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+
+      {% if form.component_rows %}
+        {% comment %}The parts this run is evidence for, each with what approving would do
+           to the catalog and a way to say "not this one". The submitter is the only
+           person who can see the machine, so they are the one who knows the GPU is a
+           spare card that came with the chassis.
+
+           Excluded rows stay listed with their state showing rather than disappearing:
+           dropping one would leave no way to change your mind, and no way for a reviewer
+           to see the decision was made.{% endcomment %}
+        <div class="card mb-3">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Components this run is evidence for</h2>
+              <p class="card-subtitle text-secondary small mb-0 mt-1">
+                Approving the run ties these to the catalog. Untick anything that is not
+                part of what you are certifying.
+              </p>
+            </div>
+          </div>
+          <div class="card-body">
+            {% comment %}Says this section was on the page. Every control in here answers by
+               absence - an unticked box is not posted - so without a marker a request that
+               never rendered these controls looks exactly like one where the reader unticked
+               all of them, and silently excluded every component. See
+               ``_components_were_submitted``.{% endcomment %}
+            {{ form.components_submitted }}
+            {{ form.included_ties.errors }}
+            {% for entry in form.component_rows %}
+              <div class="d-flex align-items-start gap-3 py-2 {% if not forloop.last %}border-bottom{% endif %}">
+                {% comment %}Ticked means "add this", which is the way round the copy
+                   above describes and the way round every other checkbox on the page
+                   works. It posts ``included_ties``; the exclusion set is derived from
+                   what is left unticked.{% endcomment %}
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="included_ties"
+                         value="{{ entry.key }}" id="tie-{{ forloop.counter }}"
+                         {% if not entry.excluded %}checked{% endif %}>
+                </div>
+                <div class="flex-grow-1">
+                  <label class="form-label mb-0" for="tie-{{ forloop.counter }}">
+                    <span class="text-secondary small">{{ entry.kind_label }}</span><br>
+                    <strong>{{ entry.brand }}</strong>
+                    {% if entry.raw_model %}{{ entry.raw_model }}{% else %}{{ entry.family.name }}{% endif %}
+                  </label>
+                  {% include "results/_component_identity.html" with entry=entry counter=forloop.counter %}
+                  {% comment %}Where a component's validation level is actually set. There
+                     was nowhere before: a component's tier derives from its attestations, the
+                     tier on a run applied only to the machine, and the admin field is
+                     overwritten by the next recompute.
+
+                     Per part rather than once for the run, because that is the shape of the
+                     claim - Intel can certify their Xeon family and can say nothing about the
+                     Dell chassis it sat in.{% endcomment %}
+                  {% if entry.claim_field %}
+                    <div class="form-check mt-2">
+                      {{ entry.claim_field }}
+                      <label class="form-check-label"
+                             for="{{ entry.claim_field.id_for_label }}">
+                        {{ entry.claim_field.label }}
+                      </label>
+                      <div class="form-text">{{ entry.claim_field.help_text }}</div>
+                    </div>
+                  {% endif %}
+
+                  <div class="small">
+                    {% if entry.excluded %}
+                      {% comment %}A rule unticked it by default (a BMC display adapter, an onboard
+                         iGPU); the reviewer can tick it above to include it anyway.{% endcomment %}
+                      {% if entry.excluded_reason %}
+                        <span class="text-secondary">
+                          <i class="ti ti-ban me-1"></i>Excluded per rule: {{ entry.excluded_reason }}
+                          - tick to include it anyway
+                        </span>
+                      {% else %}
+                        <span class="text-secondary">
+                          <i class="ti ti-ban me-1"></i>Excluded - approving will
+                          not add or attest this
+                        </span>
+                      {% endif %}
+                    {% elif entry.will_create %}
+                      <span class="text-warning">
+                        <i class="ti ti-circle-plus me-1"></i>New - approving creates this
+                        catalog entry{% if entry.catalog_name %} as
+                        <strong>{{ entry.catalog_name }}</strong>{% endif %}
+                      </span>
+                      {% if entry.new_vendor %}
+                        <span class="text-warning d-block">
+                          <i class="ti ti-alert-triangle me-1"></i>and a new
+                          manufacturer named "{{ entry.brand }}"
+                        </span>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-success">
+                        <i class="ti ti-circle-check me-1"></i>Matches
+                        {{ entry.component }}
+                      </span>
+                      {% if entry.family and entry.model %}
+                        <span class="text-secondary d-block">
+                          certified as the family; benchmarks recorded against
+                          {{ entry.model }}
+                        </span>
+                      {% endif %}
+                    {% endif %}
+                    {% comment %}The translation, for every kind rather than only the CPU.
+                       lspci names the die and brackets the product, so
+                       "CometLake-S GT2 [UHD Graphics 630]" is catalogued as
+                       "UHD Graphics 630" - and a new GPU used to say only that something
+                       would be created, never under what name. Shown next to the reported
+                       string rather than replacing it: the report is what is stored, and
+                       this is a translation of it that can be corrected later.{% endcomment %}
+                    {% if entry.family %}
+                      <span class="text-secondary d-block small">
+                        Certification applies to the family
+                        <strong>{{ entry.family.name }}</strong>.
+                      </span>
+                    {% elif entry.catalog_name and entry.catalog_name != entry.raw_model %}
+                      <span class="text-secondary d-block small">
+                        Reported as <em>{{ entry.raw_model }}</em>.
+                      </span>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% comment %}Live "what will this do" panel, filled in by submission-summary.js from
+         the baseline below. Empty and hidden without JavaScript, where the fields and the
+         component list above still say everything individually - the summary adds the net
+         effect, it is not the only place any of it appears.{% endcomment %}
+      <div class="card mb-3 d-none" id="submission-summary" data-summary>
+        <div class="card-header">
+          {% comment %}Wrapped so the two stack. `.card-header` is a flex row in this Tabler
+             build, so a title and a subtitle sitting in it as siblings render on one line with
+             no gap between them - reported here as the subtitle running straight into the
+             heading. The same pair appears in five other cards and had the same problem; a
+             block wrapper stacks them whatever the header's own display happens to be.
+          {% endcomment %}
+          <div>
+            <h2 class="card-title">What this submission will do</h2>
+            <p class="card-subtitle text-secondary small mb-0 mt-1">
+              The net result once a reviewer approves the run.
+            </p>
+          </div>
+        </div>
+        <div class="card-body" data-summary-body></div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header"><h2 class="card-title">Notes for the reviewer</h2></div>
+        <div class="card-body">
+          {% with field=form.submitter_notes %}
+            {% include "results/_form_field.html" %}
+          {% endwith %}
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        {% comment %}Saves the details and returns to the run; submitting for
+           review is a separate, deliberate step there. This said "Submit for
+           review", which claimed to do something it does not.{% endcomment %}
+        <button class="btn btn-primary">Save details</button>
+        <a class="btn btn-link" href="{{ run.get_absolute_url }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{ summary_baseline|json_script:"submission-baseline" }}
+<script src="{% static 'js/submission-summary.js' %}" defer></script>
+{% endblock %}

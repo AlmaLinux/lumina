@@ -1,0 +1,162 @@
+{% extends "base_public.html" %}
+{% block title %}{{ benchmark_label }} leaderboard - AlmaLinux{% endblock %}
+{% block content %}
+
+<ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'benchmarks:index' %}">Benchmarks</a></li>
+  <li class="breadcrumb-item active">{{ benchmark_label }}</li>
+</ol>
+
+<div class="page-header">
+  <h1 class="page-title">{{ benchmark_label }}</h1>
+  <div class="text-secondary">
+    <code>{{ benchmark_id }}</code>
+    {% if not no_results %} · version {{ version }} ·
+    {% if metric_described.api_label %}
+      {% comment %}A CUDA figure and an OpenCL figure for one card measure different software
+         stacks, so the API leads and is never left to be inferred from the key.{% endcomment %}
+      <span class="badge bg-purple-lt">{{ metric_described.api_label }}</span>
+      {{ metric_described.group_label }} ·
+      <strong>{{ metric_described.tag_label }}</strong>
+      <code class="text-secondary">{{ metric }}</code>
+    {% else %}
+      metric <strong>{{ metric }}</strong>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if no_results %}
+  <div class="card mt-3"><div class="card-body text-secondary">
+    No public results for this benchmark yet. It is part of the suite lumina runs; this page fills
+    in as machines submit it.
+  </div></div>
+{% else %}
+<div class="row g-3 mt-1">
+  <aside class="col-lg-3">
+    <form class="filter-panel card" hx-get="{{ request.path }}" hx-target="#leaderboard"
+          hx-trigger="change" hx-push-url="true">
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Group by</label>
+          <select class="form-select form-select-sm" name="group">
+            {% for value, spec in group_options.items %}
+              <option value="{{ value }}" {% if value == group_by %}selected{% endif %}>{{ spec.1 }}</option>
+            {% endfor %}
+            <option value="none" {% if group_by == "none" %}selected{% endif %}>Individual runs</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Metric</label>
+          {% comment %}GPU benchmarks get sections, one per API and clpeak category, because a flat
+             list of eleven identifiers is not a picker: finding the OpenCL bandwidth figure in it
+             required knowing the suite's naming scheme. Asked for directly. Everything else keeps
+             the flat list, which is right where a benchmark reports two or three metrics.{% endcomment %}
+          <select class="form-select form-select-sm" name="metric">
+            {% if metric_sections %}
+              {% for section in metric_sections %}
+                <optgroup label="{{ section.heading }}">
+                  {% for entry in section.metrics %}
+                    <option value="{{ entry.metric }}" {% if entry.metric == metric %}selected{% endif %}>{{ entry.tag_label }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endfor %}
+            {% else %}
+              {% for m in facets.metrics %}
+                <option value="{{ m }}" {% if m == metric %}selected{% endif %}>{{ m }}</option>
+              {% endfor %}
+            {% endif %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">CPU</label>
+          <select class="form-select form-select-sm" name="cpu">
+            <option value="">Any</option>
+            {% for v in facets.cpu %}<option value="{{ v }}" {% if v == selected.cpu %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if families %}
+        {% comment %}Family narrows to a generation so its models can be compared
+           against each other. It is not a grouping: a family's median is
+           whatever mix of its models people happened to submit.{% endcomment %}
+        <div class="mb-3">
+          <label class="form-label">Family</label>
+          <select class="form-select form-select-sm" name="{{ family_param }}">
+            <option value="">Any</option>
+            {% for v in families %}
+              <option value="{{ v }}" {% if v == selected.cpu_family or v == selected.gpu_family %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        {% if facets.sockets|length > 1 %}
+        {% comment %}Only offered when the results actually span socket counts;
+           a filter with one option is furniture.{% endcomment %}
+        <div class="mb-3">
+          <label class="form-label">Sockets</label>
+          <select class="form-select form-select-sm" name="sockets">
+            <option value="">Any</option>
+            {% for v in facets.sockets %}<option value="{{ v }}" {% if v|stringformat:"s" == selected.sockets %}selected{% endif %}>{{ v }}P</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        {% if facets.memory_type|length > 1 %}
+        <div class="mb-3">
+          <label class="form-label">Memory type</label>
+          <select class="form-select form-select-sm" name="memory_type">
+            <option value="">Any</option>
+            {% for v in facets.memory_type %}<option value="{{ v }}" {% if v == selected.memory_type %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        {% if facets.memory_speed|length > 1 %}
+        <div class="mb-3">
+          <label class="form-label">Memory speed</label>
+          <select class="form-select form-select-sm" name="memory_speed">
+            <option value="">Any</option>
+            {% for v in facets.memory_speed %}<option value="{{ v }}" {% if v|stringformat:"s" == selected.memory_speed %}selected{% endif %}>{{ v }} MT/s</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        {% if facets.gpu %}
+        <div class="mb-3">
+          <label class="form-label">GPU</label>
+          <select class="form-select form-select-sm" name="gpu">
+            <option value="">Any</option>
+            {% comment %}A GPU facet option is {value: group key (a PCI id), label: device_model}, so
+               one card's backends are one option; other facets stay bare strings.{% endcomment %}
+            {% for opt in facets.gpu %}<option value="{{ opt.value }}" {% if opt.value == selected.gpu %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">GPU driver</label>
+          <select class="form-select form-select-sm" name="gpu_driver">
+            <option value="">Any</option>
+            {% for v in facets.gpu_driver %}<option value="{{ v }}" {% if v == selected.gpu_driver %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="mb-3">
+          <label class="form-label">Vendor</label>
+          <select class="form-select form-select-sm" name="vendor">
+            <option value="">Any</option>
+            {% for v in facets.vendor %}<option value="{{ v }}" {% if v == selected.vendor %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">AlmaLinux</label>
+          <select class="form-select form-select-sm" name="alma">
+            <option value="">Any</option>
+            {% for v in facets.alma %}<option value="{{ v }}" {% if v|stringformat:'s' == selected.alma %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <input type="hidden" name="version" value="{{ version }}">
+      </div>
+    </form>
+  </aside>
+  <div class="col-lg-9">
+    {% include "results/_leaderboard_rows.html" %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

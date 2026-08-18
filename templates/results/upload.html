@@ -1,0 +1,28 @@
+{% extends "base_admin.html" %}
+{% block page_title %}Upload results{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7">
+    <div class="card"><div class="card-body">
+      <h1 class="h4 mb-3">Upload a result bundle</h1>
+      <p class="text-secondary">For machines without network access to Lumina. Produce
+        the bundle on the system under test with
+        <code>alma-cert bundle &lt;run-id&gt;</code>, copy it here, and upload it.
+        It is processed exactly like an online submission.</p>
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        {% for field in form %}
+          <div class="mb-3">
+            {{ field.label_tag }}
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+          </div>
+        {% endfor %}
+        <button class="btn btn-primary">Upload</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

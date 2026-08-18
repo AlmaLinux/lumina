@@ -1,0 +1,74 @@
+/* Combobox: a free-text or select field with a searchable dropdown of values
+   already in the catalog. Shared by the public and admin bases, because the
+   submitter form and the reviewer's assignment form both use it. See
+   static/js/combobox.js. */
+.combobox-wrap {
+  position: relative;
+}
+.combobox-menu {
+  width: 100%;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+/* No padding at the bottom, because a sticky row is pinned to the scrollport's
+   *padding* edge, not its border edge. Bootstrap's .dropdown-menu carries
+   0.5rem of vertical padding, which left an 8px strip below "+ Add a new
+   publisher…" that the rest of the list scrolled through - a half-visible
+   "Docker, Inc." sitting under the pinned row, which just looks broken.
+   Removing the strip leaves nowhere for content to show.
+
+   Two classes so this beats .dropdown-menu whatever order the stylesheets load in;
+   Bootstrap comes from a CDN and the order is not ours to rely on. */
+.combobox-menu.dropdown-menu {
+  padding-bottom: 0;
+}
+
+/* A pinned entry is an action, not a choice: "+ Add a new publisher…" at the end of a
+   list of real publishers.
+
+   **Sticky, because surviving the cap is not the same as being visible.** comboVisible
+   keeps the action in the list past the twelve-entry cap, but this menu is
+   max-height 16rem with overflow-y auto - about seven rows - so as the thirteenth
+   entry it simply sat below the scroll fold and the first report was still "I don't
+   see the add new publisher option in the list at all". Sticking it to the bottom of
+   the scroll port keeps it on screen at every scroll position without pushing it above
+   the alphabetical results, where it would be in the way of the common case.
+
+   The opaque background matters: it scrolls over the rows beneath it, so a transparent
+   one would show two overlapping labels. */
+.combobox-menu .combobox-pinned {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    background-color: var(--tblr-dropdown-bg, var(--bs-dropdown-bg, #fff));
+    border-top: 1px solid var(--tblr-border-color, #dadfe5);
+    box-shadow: 0 -0.25rem 0.35rem -0.3rem rgba(0, 0, 0, 0.18);
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+    font-style: italic;
+}
+
+/* The search box replaces a <select>, so it must not look like one. Copying the
+   select's class gave it Bootstrap's caret and its padding, which is precisely why
+   nobody could tell it was typeable; setupSelect now translates the class instead.
+   A magnifier reinforces it, and the caret is suppressed in case a caller passes
+   .form-select through another route. */
+.combobox-input {
+    /* An I-beam on hover and a blinking caret on click are the standard "you can type
+       here" signals. Worth stating explicitly rather than relying on the default,
+       because this element replaces a <select>, and a control that looks even slightly
+       like a dropdown gets clicked-and-waited-at rather than typed into. */
+    cursor: text;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%236c757d'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.242 1.156a5 5 0 1 1 0-10 5 5 0 0 1 0 10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 14px 14px;
+    padding-right: 2rem;
+}
+/* Chrome draws its own clear button for type=search; ours is the Backspace-to-clear
+   behaviour in setupSelect, and two affordances in one box read as a bug. */
+.combobox-input::-webkit-search-decoration,
+.combobox-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+}
