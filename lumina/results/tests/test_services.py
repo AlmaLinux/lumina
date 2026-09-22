@@ -520,8 +520,13 @@ def test_create_listings_from_prebuilt_reuses_existing_listing(
 
 
 def test_create_listings_from_custom_build_run(submitter, reviewer):
-    """A custom build creates motherboard + CPU components, mapping the
-    CPUID vendor string to the brand name."""
+    """A custom build creates the motherboard listing, and its parts are tied to the run.
+
+    The listing and the ties are two jobs with two owners: this function makes the board, which
+    is the listing a custom build *is*, and ``ensure_component_ties`` ties the CPU and the GPUs.
+    It used to do both, with its own loops, which is how a blacklisted display adapter got tied
+    on every custom build - those loops never read the run's exclusions.
+    """
     from lumina.hardware.models import ComponentKind
 
     report = f.make_report(
@@ -537,8 +542,9 @@ def test_create_listings_from_custom_build_run(submitter, reviewer):
 
     listings = services.create_listings_from_run(run, by=reviewer)
 
-    # motherboard + CPU family + the GPU the inventory recorded
-    assert len(listings) == 3
+    # The board is what this function creates. The CPU and GPU below are tied by
+    # ``ensure_component_ties``, which ``approve_run`` already ran above.
+    assert [listing.name for listing in listings] == ["B650M PG Riptide"]
     board = run.listing_components.get(kind=ComponentKind.motherboard.value)
     assert board.name == "B650M PG Riptide"
     assert board.vendor.name == "ASRock"

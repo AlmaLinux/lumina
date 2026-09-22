@@ -1740,6 +1740,64 @@ def _ensure_custom_system(run: TestRun) -> None:
     run.save(update_fields=["listing_system"])
 
 
+def _resolve_tied_component(vendor, raw_model: str, kind: ComponentKind):
+    """The component a tie for this part would land on, without creating one.
+
+    ``ensure_component_ties`` resolves a CPU or GPU through ``silicon_component``, which prefers
+    the curated family, and a motherboard through ``find_or_create_component``, which is model
+    level. Anything undoing a tie has to resolve it the *same* way or it looks in the wrong half
+    of the catalog: matching an excluded Ryzen at model level finds nothing, because what was
+    tied is "AMD Ryzen 7000 Series".
+
+    Matched, never created. A part the catalog does not know was never tied, and inventing it
+    here so it can be removed would put the blacklisted model in the catalog.
+    """
+    from lumina.results.component_match import family_for_model, match_component
+
+    if kind in (ComponentKind.cpu, ComponentKind.gpu):
+        family = family_for_model(raw_model, kind, vendor=vendor)
+        if family is not None:
+            return family
+    return match_component(vendor, raw_model, kind)
+
+
+def _untie_excluded(run: TestRun, targets: list[dict], keep: set) -> None:
+    """Detach parts this run excludes but is still tied to.
+
+    ``keep`` is the components this same pass tied, and it is not an optimization. Certification
+    is granted per family, so two GPUs of one family resolve to a single component: excluding the
+    onboard one and keeping the discrete one must not detach the entry they share, which is
+    carrying the discrete card's evidence.
+
+    Only the tie. The listing itself stays, with whatever other runs attested to it: one run's
+    exclusion is not grounds to retract everybody else's evidence, and a listing that loses its
+    last attestation is a separate decision from this one.
+    """
+    for target in targets:
+        vendor = resolve_vendor(target["brand"])
+        if vendor is None:
+            continue
+        component = _resolve_tied_component(vendor, target["raw_model"], target["kind"])
+        if component is None or component.pk in keep:
+            continue
+        if not run.listing_components.filter(pk=component.pk).exists():
+            continue
+        run.listing_components.remove(component)
+        if run.listing_system_id:
+            # Mirrors where ``ensure_component_ties`` put it: a CPU goes in the system's
+            # certified-CPU set and everything else in its related components, so removing
+            # from one of the two is removing from half the tie.
+            if target["kind"] == ComponentKind.cpu:
+                run.listing_system.cpus.remove(component)
+            else:
+                run.listing_system.related_components.remove(component)
+        log_action(
+            "test_run.component_untied", target=run,
+            after={"component": str(component), "kind": target["kind"].value,
+                   "reason": (run.component_exclusion_reasons or {}).get(target["key"], "")},
+        )
+
+
 def ensure_component_ties(run: TestRun) -> None:
     """Tie a passing validation run's motherboard, CPU, and GPUs to the catalog.
 
@@ -1783,9 +1841,16 @@ def ensure_component_ties(run: TestRun) -> None:
 
     excluded = set(run.excluded_component_ties or [])
     tied = []
+    # Parts an exclusion covers that are tied anyway. Ties only ever accumulated, so anything
+    # attached before a rule was written - or by a path that did not read the exclusions, as
+    # the custom-build branch of ``create_listings_from_run`` did not - stayed attached and kept
+    # being certified. Reconciling here means this converges rather than only grows, and a rule
+    # written today takes effect on the next approval instead of never.
+    unties = []
 
     for target in component_tie_targets(run):
         if target["key"] in excluded:
+            unties.append(target)
             continue
         kind = target["kind"]
         vendor = _vendor_for(target["brand"])
@@ -1810,6 +1875,8 @@ def ensure_component_ties(run: TestRun) -> None:
                 run.listing_system.related_components.add(component)
         tied.append({"component": component.pk, "kind": kind.value,
                      "created": created, "raw_model": target["raw_model"]})
+
+    _untie_excluded(run, unties, keep={entry["component"] for entry in tied})
 
     # The manual path, which is not a *target* because there is no model to resolve: no CPU
     # string was reported anywhere, so the submitter named a family outright. Certification
@@ -2712,39 +2779,20 @@ def create_listings_from_run(run: TestRun, *, by) -> list:
             record_identity_alias(run, board, by=by)
             run.listing_components.add(board)
             linked.append((board, board_created))
-        if run.cpu_model:
-            brand = cpu_brand(run)
-            cpu, cpu_created = silicon_component(
-                _vendor_for(brand), run.cpu_model, ComponentKind.cpu,
-                created_by=run.submitter,
-            )
-            if cpu is not None:
-                run.listing_components.add(cpu)
-                linked.append((cpu, cpu_created))
-        # ``tieable_gpus`` rather than the raw list: it applies the driver rule, resolves the
-        # names through ``gpu_identity``, and handles the integrated-GPU case. Reading the summary
-        # directly here was a second copy of all of that, and it stopped finding a model at all
-        # once the collector started reporting lspci's strings verbatim.
-        for gpu_info in tieable_gpus(run):
-            brand = gpu_info["vendor"]
-            attrs = {
-                key: value
-                for key, value in (
-                    ("driver", gpu_info.get("driver")),
-                    ("driver_version", gpu_info.get("driver_version")),
-                )
-                if value
-            }
-            gpu_comp, gpu_created = silicon_component(
-                _vendor_for(brand), gpu_info["model"], ComponentKind.gpu,
-                created_by=run.submitter, extra_attributes=attrs,
-            )
-            if gpu_comp is not None:
-                run.listing_components.add(gpu_comp)
-                linked.append((gpu_comp, gpu_created))
+        # The board and nothing else. This used to tie the CPU and every driver-bound GPU here
+        # too, with its own loops - a second implementation of what ``ensure_component_ties``
+        # does, reached moments later through ``apply_run_certification``, and missing the one
+        # thing that function's own comment says it is used for: it honors the run's exclusions.
+        # So a blacklisted BMC display adapter was excluded at ingest, recorded as excluded,
+        # shown as "not attached" on the review screen, and tied here anyway, on every custom
+        # build. It published as a certified GPU and came back each time it was cleaned up.
+        #
+        # The board stays because it is not a tie: it is the listing being created, with the
+        # proposal's description and spec URL on it, and it is what ``_ensure_custom_system``
+        # promotes to a System below.
         if not linked:
             raise ReviewError(
-                "The run recorded no motherboard, CPU, or GPU to create from."
+                "The run recorded no motherboard to create a listing from."
             )
         # A custom build's machine listing is its motherboard promoted to a System, so the build
         # appears under Systems with its parts tied on. Resolved from the board created above; the

@@ -369,7 +369,11 @@
       {% endcomment %}
       {% for group in component_form.component_groups %}
         {% for entry in group.entries %}
-          {% if entry.blacklistable %}
+          {% comment %}``excluded_reason`` is set only when a *rule* is why this is unticked, so
+             this is "no rule covers it yet". A human untick leaves it blank and still offers
+             the control, which is right: unticking one run is not the same statement as never
+             wanting the model again.{% endcomment %}
+          {% if entry.blacklistable and not entry.excluded_reason %}
             <form id="bl-{{ entry.key|slugify }}" method="post" class="d-none"
                   action="{% url 'review:run_blacklist_device' run.pk %}">
               {% csrf_token %}
@@ -484,7 +488,7 @@
                        exclusion rule for its PCI id so it is unticked by default on every run. The
                        inputs bind (via `form=`) to the hidden form above, since this row is inside
                        the tie form. Only for PCI devices that carry a vendor:device.{% endcomment %}
-                    {% if entry.blacklistable %}
+                    {% if entry.blacklistable and not entry.excluded_reason %}
                       <details class="mt-2 small">
                         <summary class="text-secondary" style="cursor:pointer">
                           Blacklist this model ({{ entry.pci_vendor_id }}:{{ entry.pci_device_id }})

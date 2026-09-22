@@ -164,3 +164,42 @@ class BlacklistControlRenderingTests:
         entries = services.preview_component_ties(run)
         assert entries  # a CPU row at least
         assert all(not e.get("blacklistable") for e in entries)
+
+    def test_no_control_once_a_rule_already_covers_it(self, client, reviewer, submitter):
+        """Offering to blacklist what is already blacklisted.
+
+        The row says "not attached - test rig card"; underneath it, a button offering to do the
+        thing that is already done. Pressing it is a no-op, so the reviewer is left unsure
+        whether the rule took, and the control is noise on every future run of that hardware.
+        """
+        run = _run([NVIDIA], submitter)
+        client.post(_url(run), {
+            "vendor_id": "10de", "device_id": "26b9", "kind": ComponentKind.gpu.value,
+            "reason": "test rig card",
+        })
+
+        html = client.get(reverse("review:run_detail", args=[run.pk])).content.decode()
+
+        assert "Blacklist this model" not in html
+        # The form goes too, not just the button: a hidden POST target nothing can reach is
+        # dead markup on the page.
+        assert f'action="{_url(run)}"' not in html
+
+    def test_the_control_survives_a_reviewer_unticking_one_run(self, client, reviewer,
+                                                               submitter):
+        """The gate is "a rule covers it", not "it is unticked".
+
+        Unticking a part on one run says this machine's evidence should not carry it. Never
+        wanting the model again is a larger statement, and it is exactly the one a reviewer who
+        has just unticked something is most likely to want to make next.
+        """
+        run = _run([NVIDIA], submitter)
+        run.excluded_component_ties = [
+            entry["key"] for entry in services.preview_component_ties(run)
+            if entry["raw_model"] == "L40S"
+        ]
+        run.save(update_fields=["excluded_component_ties"])
+
+        html = client.get(reverse("review:run_detail", args=[run.pk])).content.decode()
+
+        assert "Blacklist this model" in html
