@@ -143,6 +143,15 @@ class HardwareListing(VendorSlugMixin, models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # When this listing was last certified by anybody, derived from its attestations by
+    # ``hardware.services.recompute_listing_levels`` - never set by hand, like the two columns
+    # above it there.
+    #
+    # Denormalized for the same reason ``attestation_count`` is: the browse page sorts on it,
+    # and a Max() over a join on the busiest page in the catalog, under filters that already
+    # join, is a cost paid on every render and every count query. Indexed, and null for a
+    # listing nothing has certified yet - a vendor's declared support is not a certification.
+    last_certified_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         abstract = True

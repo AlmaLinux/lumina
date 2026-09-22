@@ -61,7 +61,11 @@ class _ListingAdminBase(ModelAdmin):
     list_filter = ("validation_level", "published", "vendor", "owner_vendor")
     search_fields = ("name", "model_number", "slug")
     autocomplete_fields = ("vendor", "owner_vendor", "created_by")
-    readonly_fields = ("attestation_count",)
+    # Both derived by ``recompute_listing_levels`` from the listing's attestations. Shown,
+    # because "when was this last certified" is the first thing an admin looking at a stale
+    # listing wants, and read-only, because typing a date would claim a certification that
+    # did not happen - the same reason ``named_by`` is not typeable.
+    readonly_fields = ("attestation_count", "last_certified_at")
     prepopulated_fields = {"slug": ("name",)}
 
 
@@ -169,7 +173,7 @@ class ComponentAdmin(_ListingAdminBase):
         "validation_level", "published",
     )
     list_filter = ("kind", "role", "validation_level", "published", "vendor")
-    readonly_fields = ("attestation_count", "rollup_detail")
+    readonly_fields = ("attestation_count", "last_certified_at", "rollup_detail")
     fieldsets = (
         (None, {
             "fields": ("name", "vendor", "owner_vendor", "kind",

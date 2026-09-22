@@ -34,7 +34,11 @@ _INTENTIONALLY_ABSENT = {
     # Stamped from the request on save, never typed.
     # ``named_by`` records which naming rule produced the name, written by the rule engine. Typing
     # it would claim a rule named a part it did not, which is worse than the field being read-only.
-    "Component": {"created_by", "named_by"},
+    # ``last_certified_at`` is derived from the listing's attestations by
+    # ``recompute_listing_levels``. It is read-only on the admin rather than absent, and
+    # read-only is what puts it here: typing a date would claim a certification nothing
+    # supports, and the browse page sorts on it.
+    "Component": {"created_by", "named_by", "last_certified_at"},
     "Software": {"created_by"},
     # Django's own UserAdmin: the add page takes a username and password, and everything
     # else is on the change page's fieldsets. Not ours to restructure.

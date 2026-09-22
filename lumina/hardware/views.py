@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, F
 from django.http import (
     Http404,
     HttpRequest,
@@ -92,7 +92,20 @@ def vendor_search(request: HttpRequest, kind: str) -> HttpResponse:
 
 
 def _browse(request: HttpRequest, model: type[HardwareListing], kind: str) -> HttpResponse:
-    qs = filter_listings(model, params=params(request)).select_related("vendor")
+    # Most recently certified first. The model's own ordering is alphabetical, which is right
+    # for a picker and wrong for a catalog front page: it never changes, so a reader who came
+    # back to see what was new saw the same first screen as last month. Name breaks the tie, so
+    # the order is total and pagination cannot drop or repeat a row.
+    #
+    # ``nulls_last`` is spelled out rather than left to the backend. It changes nothing on the
+    # two this project runs - SQLite and MariaDB both sort NULLs last on DESC, measured rather
+    # than assumed - and it is where an uncertified listing belongs on a page about what was
+    # certified, so the query says so instead of depending on that agreeing forever.
+    qs = (
+        filter_listings(model, params=params(request))
+        .select_related("vendor")
+        .order_by(F("last_certified_at").desc(nulls_last=True), "name")
+    )
     categories = _filter_panel_categories(
         Category.APPLIES_SYSTEM if kind == "systems" else Category.APPLIES_COMPONENT
     )

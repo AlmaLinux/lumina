@@ -81,6 +81,15 @@ def recompute_listing_levels(listing: HardwareListing) -> None:
         if version.validation_level
     )
     total = sum(version.attestations.count() for version in versions)
+    # The newest confirmation of any release, which is what "recently certified" means to a
+    # reader: a machine re-validated on 10 last week is current news whether or not its 9
+    # attestation is years old. None when nothing has certified it.
+    stamps = [
+        attestation.created_at
+        for version in versions
+        for attestation in version.attestations.all()
+    ]
+    last_certified = max(stamps) if stamps else None
 
     # Written unconditionally rather than only when they differ from what
     # ``listing`` holds in memory. Callers pass instances of any age - a view's,
@@ -90,7 +99,10 @@ def recompute_listing_levels(listing: HardwareListing) -> None:
     # not worth being clever about.
     listing.validation_level = rollup
     listing.attestation_count = total
-    listing.save(update_fields=["validation_level", "attestation_count"])
+    listing.last_certified_at = last_certified
+    listing.save(update_fields=[
+        "validation_level", "attestation_count", "last_certified_at",
+    ])
 
 
 def attach_cpu(system: System, cpu: Component) -> None:
