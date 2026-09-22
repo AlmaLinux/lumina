@@ -57,6 +57,16 @@
       </button>
     </li>
   {% endif %}
+  {% comment %}Conditional, like the one above and for the same reason: a zero here would
+     read as a routine part of the workflow, and this is a fault.{% endcomment %}
+  {% if stalled_certifications %}
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-stalled" type="button" role="tab">
+        Not published
+        {% include "review/_queue_badge.html" with count=stalled_certifications|length only %}
+      </button>
+    </li>
+  {% endif %}
   {% if survey_token_requests %}
     <li class="nav-item">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-survey-tokens" type="button" role="tab">
@@ -596,6 +606,36 @@
   <div class="tab-pane fade" id="tab-benchmark-runs" role="tabpanel">
     {% include "review/_run_queue_table.html" with runs=benchmark_runs empty="No pending benchmark runs." %}
   </div>
+
+  {% if stalled_certifications %}
+    <div class="tab-pane fade" id="tab-stalled" role="tabpanel">
+      <div class="alert alert-warning">
+        <p>
+          An approved run is evidence for each of these and none of them reached the catalog.
+          That is a fault on our side rather than work anybody left undone, and nothing the
+          submitter can act on: to them it reads as a draft they cannot publish.
+        </p>
+        <p class="mb-0">
+          An administrator re-applies the approved runs' certification with
+          <code>manage.py reapply_run_certification --dry-run</code>, then without the flag.
+        </p>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm">
+          <thead><tr><th>Listing</th><th>Type</th><th>Vendor</th></tr></thead>
+          <tbody>
+            {% for listing in stalled_certifications %}
+              <tr>
+                <td>{{ listing.name }}</td>
+                <td class="text-secondary">{{ listing.get_kind_display|default:"System" }}</td>
+                <td class="text-secondary">{{ listing.vendor.name }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
 
   {% if quarantined_runs %}
     <div class="tab-pane fade" id="tab-quarantined-runs" role="tabpanel">

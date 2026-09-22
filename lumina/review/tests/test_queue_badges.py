@@ -107,7 +107,7 @@ def test_every_queue_on_the_page_is_counted_in_the_total(client, reviewer):
     expected = {
         "submissions", "vendors", "listing_edits", "software",
         "validation_runs", "benchmark_runs", "quarantined_runs",
-        "survey_tokens", "survey",
+        "stalled_certifications", "survey_tokens", "survey",
     }
 
     assert set(queue_counts.queue_counts()) == expected
@@ -170,3 +170,81 @@ def test_the_survey_badge_equals_the_rows_that_offer_a_decision(client, reviewer
         f"the tab says {badge} while {actionable} rows offer a decision"
     )
     assert f'class="badge text-bg-danger ms-1">{actionable}</span>' in body
+
+
+def test_a_stalled_certification_reaches_the_reviewer_queue(client, reviewer):
+    """The reported gap. An approved run that published nothing was visible only on its
+    submitter's own dashboard, in a status column - so the people who could fix it had no way
+    to know, and six components sat as drafts."""
+    from django.core.files.base import ContentFile
+    from django.utils import timezone
+
+    from lumina.hardware.models import System
+    from lumina.results.models import RunType, TestRun
+    from lumina.vendors.models import Vendor
+
+    vendor = Vendor.objects.create(name="Stalled Co", published=True)
+    system = System.objects.create(vendor=vendor, name="Box 9", published=False)
+    TestRun.objects.create(
+        run_type=RunType.validate.value, schema_version="1.0", suite_version="0.1.0",
+        submitter=reviewer, source="api",
+        bundle=ContentFile(b"s", name="stalled.tar.zst"), bundle_sha256=f"{7:064d}",
+        status=TestRun.STATUS_APPROVED, published_at=timezone.now(),
+        host_os_id="almalinux", listing_system=system,
+    )
+
+    counts = queue_counts.queue_counts()
+    body = client.get(reverse("review:queue")).content.decode()
+
+    assert counts["stalled_certifications"] == 1
+    assert "#tab-stalled" in body
+    assert "Box 9" in body
+    assert "reapply_run_certification" in body, "the tab has to say how to fix it"
+
+
+def test_the_stalled_tab_is_absent_when_the_catalog_agrees_with_itself(client, reviewer):
+    """A zero here would read as a routine part of the workflow. It is a fault."""
+    body = client.get(reverse("review:queue")).content.decode()
+
+    assert queue_counts.queue_counts()["stalled_certifications"] == 0
+    assert "#tab-stalled" not in body
+
+
+def _unpublished_run(reviewer, *, scope=None, released=True, sha="8"):
+    """An approved run tied to an unpublished system, with the knobs the counter filters on."""
+    from django.core.files.base import ContentFile
+    from django.utils import timezone
+
+    from lumina.hardware.models import System
+    from lumina.results.models import RunType, TestRun
+    from lumina.vendors.models import Vendor
+
+    vendor, _ = Vendor.objects.get_or_create(name="Stalled Co", defaults={"published": True})
+    system = System.objects.create(
+        vendor=vendor, name=f"Box {sha}", published=False)
+    return TestRun.objects.create(
+        run_type=RunType.validate.value, schema_version="1.0", suite_version="0.1.0",
+        submitter=reviewer, source="api",
+        bundle=ContentFile(b"s", name=f"stalled{sha}.tar.zst"),
+        bundle_sha256=f"{int(sha):064d}",
+        status=TestRun.STATUS_APPROVED,
+        published_at=timezone.now() if released else None,
+        claim_scope=scope or [], host_os_id="almalinux", listing_system=system,
+    )
+
+
+def test_a_scoped_runs_machine_is_not_counted_as_stalled(client, reviewer):
+    """A scoped run can never certify a System, whatever else it reports, so its machine being
+    unpublished is the correct outcome rather than a fault. Counting it would send a reviewer
+    to repair something that is working."""
+    _unpublished_run(reviewer, scope=["gpu"], sha="3")
+
+    assert queue_counts.queue_counts()["stalled_certifications"] == 0
+
+
+def test_an_embargoed_runs_listings_are_not_counted_as_stalled(client, reviewer):
+    """Approved and withheld on purpose. ``publish_due_runs`` releases it on the day, and until
+    then the listing is unpublished exactly as intended."""
+    _unpublished_run(reviewer, released=False, sha="4")
+
+    assert queue_counts.queue_counts()["stalled_certifications"] == 0

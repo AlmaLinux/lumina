@@ -1841,6 +1841,52 @@ def _loosens_gate(incoming: int | None, current: int | None) -> bool:
     return int(incoming) < int(current)
 
 
+def ensure_listing_version(run: TestRun, listing):
+    """This listing's row for the release ``run`` proved, created if it is not there yet.
+
+    The one place a ``ListingVersion`` is made from a run, and the reason it is a function.
+    ``_attest_one`` used to *look* for this row and give up when it was missing, which made
+    certification depend on ``record_compatibility`` having already run over the same listing.
+    That held in ``apply_run_certification`` and in none of the three other places that reach
+    ``_apply_attestation``, and the dependency was invisible: the give-up was a bare ``return
+    False``. Owning the row here means certification cannot be called too early, because there
+    is no longer an earlier.
+
+    One row per (listing, release) is enforced by ``ListingVersion``'s uniques on every backend.
+    The lock is still worth having: it makes two concurrent approvals of the same hardware
+    serialize rather than one of them dying on an IntegrityError that ``get_or_create`` would
+    surface to the reviewer as a 500. Its own atomic block, so the lock is valid whichever
+    caller we are under - a no-op savepoint when that caller is already atomic, as approve_run
+    is.
+    """
+    from lumina.hardware.models import ListingVersion
+
+    with transaction.atomic():
+        type(listing).objects.select_for_update().filter(pk=listing.pk).first()
+        version, _created = ListingVersion.objects.get_or_create(
+            release=run.alma_release,
+            defaults={"source": ListingVersion.SOURCE_RUN,
+                      "available_from_minor": run.available_from_minor},
+            **listing_fk(listing),
+        )
+        changed = []
+        if version.source != ListingVersion.SOURCE_RUN:
+            # A run has now proven what was previously only declared.
+            version.source = ListingVersion.SOURCE_RUN
+            changed.append("source")
+        # A gate only ever loosens. Evidence from a shipped release supersedes a Kitten claim
+        # outright - somebody has now proved the hardware works on something people can install
+        # - and where two Kitten runs disagree the earlier minor is the better news and the one
+        # already proved. Tightening here would let a later run put a disclaimer back on a claim
+        # that had earned its way out of one.
+        if _loosens_gate(run.available_from_minor, version.available_from_minor):
+            version.available_from_minor = run.available_from_minor
+            changed.append("available_from_minor")
+        if changed:
+            version.save(update_fields=changed)
+    return version
+
+
 def record_compatibility(run: TestRun) -> list:
     """Record AlmaLinux compatibility on everything a passing run is tied to.
 
@@ -1852,11 +1898,21 @@ def record_compatibility(run: TestRun) -> list:
     certifies per major, the way the software catalog always has. The minor is still recorded on
     the run, which is where the provenance of the evidence belongs.
     """
-    from lumina.hardware.models import ListingVersion
 
     if not certifies(run):
         return []
-    if run.alma_release_id is None or run.alma_minor is None:
+    # The *major* is the claim, so that is all this needs. It used to require a minor as well,
+    # which disqualified every run on AlmaLinux Kitten - Kitten has no minor - so a Kitten run
+    # wrote no release row, and ``_attest_one`` then had nothing to hang an attestation on and
+    # published nothing. Silently, for the whole machine's worth of parts.
+    #
+    # Nothing downstream wanted that minor. The timing gate is ``run.available_from_minor``, a
+    # separate field the submitter sets with --support-from-minor and a reviewer can correct;
+    # ``ListingVersion.awaiting_major_release`` says outright that a Kitten run "genuinely
+    # certifies the major", and the minor a run passed on is provenance recorded on the run.
+    # A Kitten run certifies the major it ran on, and names an enablement minor only if its
+    # submitter chose to.
+    if run.alma_release_id is None:
         return []
 
     # Same rule as ``_apply_attestation``, and for the same reason: a compatibility row saying
@@ -1866,38 +1922,7 @@ def record_compatibility(run: TestRun) -> list:
 
     recorded = []
     for listing in targets:
-        fk_kw = listing_fk(listing)
-        # One row per (listing, release) is enforced by ListingVersion's uniques on
-        # every backend now that their redundant conditions are gone. The lock is
-        # still worth having: it makes two concurrent approvals of the same hardware
-        # serialize rather than one of them dying on an IntegrityError that
-        # get_or_create would surface to the reviewer as a 500.
-        #
-        # Own atomic block so the lock is valid whichever caller we are under; a
-        # no-op savepoint when that caller is already atomic, as approve_run is.
-        with transaction.atomic():
-            type(listing).objects.select_for_update().filter(pk=listing.pk).first()
-            version, created = ListingVersion.objects.get_or_create(
-                release=run.alma_release,
-                defaults={"source": ListingVersion.SOURCE_RUN,
-                          "available_from_minor": run.available_from_minor},
-                **fk_kw,
-            )
-            changed = []
-            if version.source != ListingVersion.SOURCE_RUN:
-                # A run has now proven what was previously only declared.
-                version.source = ListingVersion.SOURCE_RUN
-                changed.append("source")
-            # A gate only ever loosens. Evidence from a shipped release supersedes a Kitten
-            # claim outright - somebody has now proved the hardware works on something people
-            # can install - and where two Kitten runs disagree the earlier minor is the better
-            # news and the one already proved. Tightening here would let a later run put a
-            # disclaimer back on a claim that had earned its way out of one.
-            if _loosens_gate(run.available_from_minor, version.available_from_minor):
-                version.available_from_minor = run.available_from_minor
-                changed.append("available_from_minor")
-            if changed:
-                version.save(update_fields=changed)
+        ensure_listing_version(run, listing)
         # The minor is still logged, on the run itself, and shown wherever the run is - it is
         # provenance for this evidence rather than the scope of the claim.
         recorded.append(
@@ -2816,6 +2841,37 @@ def certifies(run: TestRun) -> bool:
     return not unevidenced_claims(run)
 
 
+def stalled_listings():
+    """The listings an approved, released run tied and did not publish, as two querysets.
+
+    One definition, three readers: the reviewer queue's badge counts them, its tab lists them,
+    and ``reapply_run_certification`` repairs them. Three copies of "what counts as stalled"
+    would drift, and the one that drifted would be the badge - the only one anybody watches.
+
+    Approximate on purpose, in the direction of over-reporting. A scoped run certifies only the
+    kinds it claims, and that rule lives in ``scoped_listings`` rather than in SQL, so scoped
+    runs are excluded whole rather than half-reproduced here. Sending a reviewer to look at a
+    run that turns out to be fine is a better failure than a count that quietly goes wrong.
+
+    Returns ``(systems, components)`` rather than one list, because they are separate tables and
+    the run reaches them through separate columns.
+    """
+    from lumina.hardware.models import Component, System
+
+    proved = {
+        "test_runs__status": TestRun.STATUS_APPROVED,
+        # Released, not merely approved: an embargoed run is withheld on purpose.
+        "test_runs__published_at__isnull": False,
+        "test_runs__run_type": RunType.validate.value,
+        # Empty scope is a whole-machine run.
+        "test_runs__claim_scope": [],
+    }
+    return (
+        System.objects.filter(published=False, **proved).distinct(),
+        Component.objects.filter(published=False, **proved).distinct(),
+    )
+
+
 def scoped_listings(run: TestRun) -> list:
     """The listings a run is actually evidence for.
 
@@ -2856,9 +2912,6 @@ def _apply_attestation(run: TestRun) -> bool:
     # if the component already carried a release row, minted an attestation up to vendor tier on
     # evidence that proved nothing. record_compatibility and record_architecture already gate on
     # ``certifies``; this was the one writer that never got converted.
-    if not certifies(run):
-        return False
-
     attested_any = False
     # The safety property of a scoped run, in one place: ``scoped_listings``.
     #
@@ -2871,8 +2924,31 @@ def _apply_attestation(run: TestRun) -> bool:
     # Enforced here rather than by being careful upstream, because this is the only function that
     # can raise a listing's standing. Every path that reaches the catalog goes through it, so a
     # future caller cannot forget the rule.
-    for listing in scoped_listings(run):
-        attested_any |= _attest_one(run, listing)
+    listings = scoped_listings(run)
+    if certifies(run):
+        for listing in listings:
+            attested_any |= _attest_one(run, listing)
+
+    # A validate run that a reviewer approved and that then moved nothing is a fault rather than
+    # an outcome, and it used to leave no trace at all: six components of one machine stayed
+    # drafts with nothing written down anywhere and only their submitter's own dashboard saying
+    # so. Recorded here rather than inside ``_attest_one`` because the useful statement is about
+    # the approval - "this published nothing" - not about each listing in turn.
+    #
+    # Validate only. A benchmark run certifies nothing by design and is approved constantly, so
+    # logging those would bury the one entry worth reading. And it reads ``listings`` rather
+    # than ``attested_any``: a repeat run whose every attestation is a duplicate of somebody
+    # else's also returns False, and that is the ordinary case rather than a fault.
+    if run.run_type == RunType.validate.value:
+        unpublished = [listing for listing in listings if not listing.published]
+        if unpublished:
+            log_action(
+                "test_run.certification_incomplete",
+                target=run,
+                after={"listings": [str(listing) for listing in unpublished],
+                       "certifies": certifies(run),
+                       "release": run.alma_release.major if run.alma_release_id else None},
+            )
     return attested_any
 
 
@@ -3071,11 +3147,16 @@ def _version_for(run: TestRun, listing) -> ListingVersion | None:
     ``record_compatibility`` creates it, and runs first in both callers, so by the
     time we get here it exists for any run that reports a release we recognise.
 
-    Returns None when the run's reported version matches no ``AlmaLinuxRelease``.
-    An attestation is a statement about a specific major, so with no major there
-    is nothing to state - narrower than the old behaviour, where such a run still
-    lifted the listing's tier. Logged rather than silent, because a reviewer who
-    approved it would otherwise have no way to see that nothing was certified.
+    Returns None only when the run's reported version matches no ``AlmaLinuxRelease``. An
+    attestation is a statement about a specific major, so with no major there is nothing to
+    state, and that is logged rather than silent: a reviewer who approved the run would
+    otherwise have no way to see that nothing was certified.
+
+    It used to have a second way of returning None - the row simply not existing yet - which
+    was not a legitimate answer at all but a call-order bug wearing the same clothes, and the
+    two were indistinguishable to every caller. That is where a whole machine's worth of parts
+    went quiet. ``ensure_listing_version`` makes the row instead, so the only None left is the
+    one that means something.
     """
     if run.alma_release_id is None:
         log_action(
@@ -3084,9 +3165,7 @@ def _version_for(run: TestRun, listing) -> ListingVersion | None:
             after={"listing": str(listing), "reason": "unrecognised AlmaLinux release"},
         )
         return None
-    return ListingVersion.objects.filter(
-        release_id=run.alma_release_id, **listing_fk(listing)
-    ).first()
+    return ensure_listing_version(run, listing)
 
 
 def _attest_one(run: TestRun, listing) -> bool:

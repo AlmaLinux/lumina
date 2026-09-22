@@ -58,10 +58,32 @@ def _counters() -> dict:
         "benchmark_runs": lambda: TestRun.objects.open_for_review().filter(
             run_type=RunType.benchmark.value).count(),
         "quarantined_runs": lambda: TestRun.objects.quarantined().count(),
+        # Listings an approved, released run ties and did not publish. Not a queue of work
+        # somebody submitted: it is the catalog disagreeing with itself, and it is here because
+        # this is the page the people who can fix it already look at. Six components of one
+        # machine sat as drafts for weeks because the only place that said so was their
+        # submitter's own dashboard, in a status column.
+        #
+        # What counts as stalled lives in ``results.services.stalled_listings``, with the tab
+        # that lists them and the command that repairs them.
+        "stalled_certifications": _stalled_certifications,
         "survey_tokens": lambda: SurveyTokenRequest.objects.filter(
             status__in=SurveyTokenRequest.OPEN_STATUSES).count(),
         "survey": lambda: SurveySubmission.objects.pending_review().count(),
     }
+
+
+def _stalled_certifications() -> int:
+    """How many listings an approved, released run left unpublished.
+
+    ``results.services.stalled_listings`` owns what counts as stalled; this only adds the two
+    up. COUNT queries rather than loading rows, like every other counter here: the sidebar
+    renders on every signed-in page.
+    """
+    from lumina.results.services import stalled_listings
+
+    systems, components = stalled_listings()
+    return systems.count() + components.count()
 
 
 def queue_counts() -> dict[str, int]:

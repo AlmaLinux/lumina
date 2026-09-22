@@ -29,6 +29,7 @@ from lumina.hardware.models import (
 )
 from lumina.hardware.services import annotate_similar_listings, similar_listings
 from lumina.notifications.services import emit
+from lumina.results.services import stalled_listings
 from lumina.review.permissions import reviewer_required
 from lumina.software import services as software_services
 from lumina.software.models import (
@@ -179,11 +180,20 @@ def queue(request: HttpRequest) -> HttpResponse:
         .select_related("submitter", "listing_system")
         .order_by("received_at")
     )
+    # Not a queue of submitted work: the catalog disagreeing with itself. An approved run that
+    # published nothing used to be visible only on its submitter's own dashboard, in a status
+    # column, so six components of one machine sat as drafts with nobody else able to see it.
+    stalled_systems, stalled_components = stalled_listings()
+    stalled = [
+        *stalled_systems.select_related("vendor"),
+        *stalled_components.select_related("vendor"),
+    ]
     return render(
         request,
         "review/queue.html",
         {
             "submissions": submissions,
+            "stalled_certifications": stalled,
             "vendor_proposals": vendor_proposals,
             "vendor_claims": vendor_claims,
             # One badge for the pane, because a template cannot add two lengths.

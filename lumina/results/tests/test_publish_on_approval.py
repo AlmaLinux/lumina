@@ -157,7 +157,7 @@ def test_a_dry_run_writes_nothing(submitter, release):
 
     component.refresh_from_db()
     assert not component.published
-    assert "Would publish" in output
+    assert "Would try" in output
 
 
 def test_an_embargoed_run_is_left_alone(submitter, release):
@@ -226,3 +226,134 @@ def test_a_system_left_behind_is_repaired_too(submitter, release):
 
     system.refresh_from_db()
     assert system.published
+
+
+# --- a Kitten run certifies the major it ran on -----------------------------------
+#
+# Reported from production: six components of one machine stayed drafts after an approved run,
+# and the repair command said it had published them. Both halves came from one line in
+# ``record_compatibility`` that required ``alma_minor`` as well as a release - and AlmaLinux
+# Kitten has no minor, so it wrote no release row, and certification then had nothing to hang an
+# attestation on and gave up without saying so.
+
+
+def kitten_run(submitter, release) -> TestRun:
+    """An approved, released whole-machine run on Kitten: a release, no minor."""
+    vendor, _ = Vendor.objects.get_or_create(name="LENOVO", defaults={"published": True})
+    system = System.objects.create(vendor=vendor, name="ThinkPad P16 Gen 3")
+    component = Component.objects.create(
+        vendor=vendor, name="21RRZD7QUS", kind=ComponentKind.motherboard.value,
+    )
+    run = TestRun.objects.create(
+        run_type=RunType.validate.value, schema_version="1.0", suite_version="0.1.0",
+        submitter=submitter, source="api",
+        bundle=ContentFile(b"k", name="kitten.tar.zst"), bundle_sha256=f"{9:064d}",
+        status=TestRun.STATUS_APPROVED, alma_release=release, alma_minor=None,
+        host_os_id="almalinux", published_at=timezone.now(), listing_system=system,
+    )
+    run.listing_components.add(component)
+    return run
+
+
+def test_a_kitten_run_certifies_the_major_it_ran_on(submitter, release):
+    """The reported bug. Kitten has no minor, and the major is the whole claim: a run that
+    passed on Kitten 10 is evidence about AlmaLinux 10."""
+    run = kitten_run(submitter, release)
+
+    services.apply_run_certification(run, tie=False)
+
+    assert run.listing_system.__class__.objects.get(pk=run.listing_system_id).published
+    assert all(c.published for c in Component.objects.filter(test_runs=run))
+
+
+def test_it_records_a_release_row_without_a_minor(submitter, release):
+    """The minor is provenance on the run, not the scope of the claim - which is what
+    ``record_compatibility``'s own docstring has said since the floor was removed."""
+    run = kitten_run(submitter, release)
+
+    services.apply_run_certification(run, tie=False)
+
+    version = ListingVersion.objects.get(release=release, listing_system=run.listing_system)
+    assert version.source == ListingVersion.SOURCE_RUN
+    assert version.available_from_minor is None, "no --support-from-minor was given"
+
+
+def test_the_repair_command_reports_what_actually_happened(submitter, release):
+    """It reported what it intended to publish and never looked at the result, so a repair that
+    did nothing printed six names and a success. That is how this went unnoticed twice."""
+    kitten_run(submitter, release)
+
+    output = repair()
+
+    assert "Published" in output
+    assert "did not publish" not in output
+
+
+def test_a_certification_that_publishes_nothing_leaves_a_trace(submitter, release):
+    """The whole incident was invisible: no audit entry, no Sentry event, nothing but a status
+    column on one person's dashboard."""
+    from lumina.audit.models import AuditLogEntry
+
+    run = kitten_run(submitter, release)
+    # A validate run naming a release this catalog does not know, so there is no major to make
+    # a statement about and nothing publishes. A real state, and the one the audit entry is for.
+    run.alma_release = None
+    run.save(update_fields=["alma_release"])
+
+    services.apply_run_certification(run, tie=False)
+
+    assert AuditLogEntry.objects.filter(
+        action="test_run.certification_incomplete", target_id=str(run.pk),
+    ).exists()
+
+
+def test_record_compatibility_writes_a_row_for_a_kitten_run(submitter, release):
+    """Directly, because the two fixes mask each other end to end: certification now ensures
+    its own release row, so a Kitten run publishes even with the old minor gate back in place.
+    This is the one that sees the gate."""
+    run = kitten_run(submitter, release)
+
+    recorded = services.record_compatibility(run)
+
+    assert recorded, "a Kitten run recorded no compatibility at all"
+    assert {entry["release"] for entry in recorded} == {release.major}
+
+
+def test_attestation_alone_publishes_without_a_prior_compatibility_pass(submitter, release):
+    """The structural half. ``_apply_attestation`` is reached from three places that do not
+    create release rows first - ``create_listings_from_run`` twice, and the re-assess path - and
+    it used to give up silently when the row was missing. It makes the row now."""
+    run = kitten_run(submitter, release)
+
+    services._apply_attestation(run)
+
+    assert System.objects.get(pk=run.listing_system_id).published
+
+
+def test_a_benchmark_approval_is_not_reported_as_incomplete(submitter, release):
+    """A benchmark run certifies nothing by design and is approved constantly. Logging those
+    would bury the one entry worth reading."""
+    from lumina.audit.models import AuditLogEntry
+
+    run = kitten_run(submitter, release)
+    run.run_type = RunType.benchmark.value
+    run.save(update_fields=["run_type"])
+
+    services.apply_run_certification(run, tie=False)
+
+    assert not AuditLogEntry.objects.filter(
+        action="test_run.certification_incomplete", target_id=str(run.pk)).exists()
+
+
+def test_the_command_says_so_when_a_repair_does_not_take(submitter, release):
+    """The failure that started this: it reported six names and a success having published
+    nothing. A run naming no release cannot certify, and the command has to say that rather
+    than claim it worked."""
+    run = kitten_run(submitter, release)
+    run.alma_release = None
+    run.save(update_fields=["alma_release"])
+
+    output = repair()
+
+    assert "did not publish" in output
+    assert "Published" not in output
