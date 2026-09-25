@@ -35,7 +35,7 @@ from lumina.core.certification import (
     highest_level,
     resync_derived_levels,
 )
-from lumina.core.models import VendorSlugMixin
+from lumina.core.models import URL_MAX_LENGTH, VendorSlugMixin
 from lumina.core.review import ReviewWorkflow
 
 # The two tiers a certification row can record. Community standing is not a
@@ -72,9 +72,9 @@ class Software(VendorSlugMixin, models.Model):
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=220, unique=True, blank=True)
     description = models.TextField(blank=True)
-    homepage_url = models.URLField(blank=True)
-    documentation_url = models.URLField(blank=True)
-    support_url = models.URLField(blank=True)
+    homepage_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
+    documentation_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
+    support_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
 
     published = models.BooleanField(default=False)
     # Denormalized rollup of the per-major tiers. Maintained by
@@ -487,9 +487,9 @@ class SoftwareEditProposal(ReviewWorkflow, models.Model):
     )
     name = models.CharField(max_length=200, blank=True)
     description = models.TextField(blank=True)
-    homepage_url = models.URLField(blank=True)
-    documentation_url = models.URLField(blank=True)
-    support_url = models.URLField(blank=True)
+    homepage_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
+    documentation_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
+    support_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
 
     submitter_notes = models.TextField(blank=True)
     status = models.CharField(

@@ -16,6 +16,8 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
+from lumina.core.models import URL_MAX_LENGTH
+
 # The audiences ``services._users_for`` knows how to resolve. Kept in step with
 # lumina.notifications.events, which names the same three.
 AUDIENCE_CHOICES = [
@@ -63,7 +65,8 @@ class NotificationEndpoint(models.Model):
 
     name = models.CharField(max_length=120, help_text="A label for this endpoint.")
     url = models.URLField(
-        blank=True, help_text="Where the POST is sent. Blank for email, which has no URL.",
+        max_length=URL_MAX_LENGTH, blank=True,
+        help_text="Where the POST is sent. Blank for email, which has no URL.",
     )
     kind = models.CharField(
         max_length=16, choices=KIND_CHOICES, default=KIND_GENERIC,

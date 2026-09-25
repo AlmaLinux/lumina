@@ -35,7 +35,7 @@ from lumina.core.certification import (
     highest_level,
     level_outranks,
 )
-from lumina.core.models import VendorSlugMixin
+from lumina.core.models import URL_MAX_LENGTH, VendorSlugMixin
 from lumina.core.review import ReviewWorkflow
 
 
@@ -118,6 +118,7 @@ class HardwareListing(VendorSlugMixin, models.Model):
     model_number = models.CharField(max_length=120, blank=True)
     description = models.TextField(blank=True)
     vendor_spec_url = models.URLField(
+        max_length=URL_MAX_LENGTH,
         blank=True,
         help_text=(
             "Link to the vendor's spec sheet for this listing. Surfaced as a "
@@ -882,7 +883,7 @@ class ListingEditProposal(ReviewWorkflow, models.Model):
     name = models.CharField(max_length=200, blank=True)
     model_number = models.CharField(max_length=120, blank=True)
     description = models.TextField(blank=True)
-    vendor_spec_url = models.URLField(blank=True)
+    vendor_spec_url = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
 
     submitter_notes = models.TextField(blank=True)
     status = models.CharField(

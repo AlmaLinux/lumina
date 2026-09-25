@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from lumina.audit.services import log_action
 from lumina.core.certification import ValidationLevel, level_display, level_outranks
+from lumina.core.models import URL_MAX_LENGTH
 from lumina.core.review import stamp_review_decision
 from lumina.hardware.models import (
     ComponentKind,
@@ -972,6 +973,33 @@ def cpu_brand(run: TestRun) -> str:
     same machine was two answers to one question."""
     return cpu_aliases.brand(run.cpu_vendor) or "Unknown"
 # The suite reports GPU vendors as lowercase PCI-id names.
+def proposal_spec_url(run: TestRun) -> str:
+    """The proposal's vendor spec URL, dropped when the catalog cannot store it.
+
+    ``listing_proposal`` is JSON, so it holds whatever the form accepted on the day it was
+    written and is read back on approval - which may be weeks later, across a release that
+    changed the form, and is the one moment where a failure costs a reviewer their whole
+    approval. It did: a URL wider than the column raised ``DataError`` from inside the
+    approval transaction, rolling the approval back with a 500 that named a field the
+    reviewer had never filled in and could not see. The forms bound this now, so nothing new
+    arrives over-length; every proposal already in the database predates that.
+
+    Dropped rather than truncated. A URL cut at the column width is a broken link presented
+    to readers as the vendor's spec sheet, which is worse than no link. Logged with the full
+    value, because the column cannot hold it either and the audit trail is then the only
+    place it survives.
+    """
+    url = ((run.listing_proposal or {}).get("vendor_spec_url") or "").strip()
+    if len(url) <= URL_MAX_LENGTH:
+        return url
+    log_action(
+        "test_run.proposal_value_dropped", target=run,
+        after={"field": "vendor_spec_url", "length": len(url),
+               "limit": URL_MAX_LENGTH, "value": url},
+    )
+    return ""
+
+
 def _vendor_for(name: str) -> Vendor:
     """Resolve a freeform vendor string to a Vendor, creating one only when
     no existing vendor or alias matches - "Dell" must not fork "Dell Inc."."""
@@ -1097,7 +1125,10 @@ def apply_vendor_maintained_fields(run: TestRun, listing) -> None:
     proposal = run.listing_proposal or {}
     changed = []
     for field in ("description", "vendor_spec_url"):
-        value = (proposal.get(field) or "").strip()
+        # ``description`` is a TextField and takes whatever it is given; the URL is the one
+        # with a column width to respect, and this path writes to a *live* listing.
+        value = (proposal_spec_url(run) if field == "vendor_spec_url"
+                 else (proposal.get(field) or "").strip())
         if value and value != getattr(listing, field):
             setattr(listing, field, value)
             changed.append(field)
@@ -2710,7 +2741,7 @@ def create_listings_from_run(run: TestRun, *, by) -> list:
                 model_number=(proposal.get("model_number")
                               or run.system_model_number or ""),
                 description=proposal.get("description", ""),
-                vendor_spec_url=proposal.get("vendor_spec_url", ""),
+                vendor_spec_url=proposal_spec_url(run),
                 created_by=run.submitter,
                 # A vendor submitting **their own** hardware becomes the listing's
                 # maintainer, which is what gives them edit rights later. Only their own:
@@ -2772,7 +2803,7 @@ def create_listings_from_run(run: TestRun, *, by) -> list:
             if board_created:
                 # Descriptive fields only a human could supply.
                 board.description = proposal.get("description", "")
-                board.vendor_spec_url = proposal.get("vendor_spec_url", "")
+                board.vendor_spec_url = proposal_spec_url(run)
                 board.owner_vendor = run.on_behalf_of
                 board.save(update_fields=["description", "vendor_spec_url",
                                           "owner_vendor"])

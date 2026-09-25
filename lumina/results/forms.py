@@ -7,6 +7,7 @@ from django.utils.html import format_html, format_html_join
 
 from lumina.core.certification import ValidationLevel
 from lumina.core.forms import bootstrapify
+from lumina.core.models import URL_MAX_LENGTH
 from lumina.hardware.models import Component, System
 from lumina.results import proposal_keys
 
@@ -702,6 +703,7 @@ class RunListingProposalForm(ComponentTiesMixin, forms.Form):
     )
     vendor_spec_url = forms.URLField(
         required=False, label="Vendor spec sheet URL", assume_scheme="https",
+        max_length=URL_MAX_LENGTH,
     )
 
     # The specific part, which is what benchmarks rank and what the family is

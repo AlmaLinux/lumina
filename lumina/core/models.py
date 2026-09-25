@@ -16,6 +16,29 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 
+# How wide any URL column in this project is, and the bound every form field that writes one
+# must carry. Stated once because the two halves disagree by default: ``models.URLField``
+# caps at 200 and ``forms.URLField`` caps at nothing, so a form written the obvious way
+# accepts more than its column holds and the mismatch is invisible in the source - both
+# declarations just say "URLField".
+#
+# That gap surfaced as a DataError raised from inside the approval transaction: a 500 on a
+# reviewer's approve, on MariaDB only (SQLite does not enforce VARCHAR length, so the suite
+# was quiet), naming a field that reviewer had never filled in and could not see, weeks after
+# the submitter typed it.
+#
+# 2048 rather than Django's 200, which is a default rather than a judgement and is simply too
+# short for the URLs people paste here: a vendor spec sheet reached through a support portal,
+# with a locale segment and campaign parameters, passes 200 without being unusual. 2048 is the
+# practical interop ceiling - the oldest browser limit anybody still designs around is 2083,
+# and proxies and server header buffers sit at or above it - so a URL that works in a browser
+# fits in the catalog.
+#
+# One number for every URL column, so a value accepted on a proposal row can always be written
+# to the listing it applies to. ``test_proposal_field_widths`` holds every column and every
+# form field to it.
+URL_MAX_LENGTH = 2048
+
 
 class VendorSlugMixin:
     """A unique, vendor-prefixed slug, generated on first save.

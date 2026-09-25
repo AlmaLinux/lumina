@@ -6,6 +6,7 @@ from django.db import transaction
 
 from lumina.core.certification import ValidationLevel
 from lumina.core.forms import bootstrapify, narrow_level_field
+from lumina.core.models import URL_MAX_LENGTH
 from lumina.releases.models import AlmaLinuxRelease
 from lumina.software.models import (
     Software,
@@ -94,12 +95,20 @@ class SoftwareSubmissionForm(forms.Form):
     description = forms.CharField(
         widget=forms.Textarea(attrs={"rows": 3}), required=False
     )
-    homepage_url = forms.URLField(required=False, assume_scheme="https")
-    documentation_url = forms.URLField(required=False, assume_scheme="https")
-    support_url = forms.URLField(required=False, assume_scheme="https")
+    # ``max_length`` on all four for the reason ``new_vendor_name`` has one: the column has a
+    # width and the form is what stops a value wider than it. ``forms.URLField`` does not
+    # inherit the model's - it defaults to no limit at all - so these read as bounded and were
+    # not, which on the hardware side meant a DataError inside a review transaction.
+    homepage_url = forms.URLField(
+        required=False, assume_scheme="https", max_length=URL_MAX_LENGTH)
+    documentation_url = forms.URLField(
+        required=False, assume_scheme="https", max_length=URL_MAX_LENGTH)
+    support_url = forms.URLField(
+        required=False, assume_scheme="https", max_length=URL_MAX_LENGTH)
 
     new_vendor_name = forms.CharField(max_length=120, required=False)
-    new_vendor_homepage = forms.URLField(required=False, assume_scheme="https")
+    new_vendor_homepage = forms.URLField(
+        required=False, assume_scheme="https", max_length=URL_MAX_LENGTH)
     new_vendor_contact_email = forms.EmailField(required=False)
     new_vendor_description = forms.CharField(
         widget=forms.Textarea(attrs={"rows": 2}), required=False

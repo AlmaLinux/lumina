@@ -28,6 +28,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
 
+from lumina.core.models import URL_MAX_LENGTH
 from lumina.core.review import ReviewWorkflow
 
 
@@ -85,7 +86,7 @@ class Vendor(models.Model):
             "verification are shared regardless."
         ),
     )
-    homepage = models.URLField(blank=True)
+    homepage = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
     contact_email = models.EmailField(blank=True)
     logo = models.ImageField(upload_to=_vendor_logo_path, blank=True, null=True)
     verified = models.BooleanField(
@@ -204,7 +205,7 @@ class VendorProposal(ReviewWorkflow, models.Model):
 
     # Proposed field values. Names match Vendor so _apply can loop over them.
     name = models.CharField(max_length=120, blank=True)
-    homepage = models.URLField(blank=True)
+    homepage = models.URLField(max_length=URL_MAX_LENGTH, blank=True)
     contact_email = models.EmailField(blank=True)
     description = models.TextField(blank=True)
     # Carried onto the Vendor this proposal creates. Without it a software vendor
