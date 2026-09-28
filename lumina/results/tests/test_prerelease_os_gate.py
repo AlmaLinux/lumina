@@ -807,7 +807,30 @@ def test_the_assignment_stays_behind_its_override(client, submitter, reviewer):
     body = client.get(reverse("review:run_detail", args=[run.pk])).content.decode()
 
     assert _collapsed(body, 'name="claimed_validation_level"')
-    assert _collapsed(body, 'name="machine_kind"')
+
+
+def test_the_identity_controls_are_shown_outright(client, submitter, reviewer):
+    """``machine_kind`` used to be asserted collapsed, one line above, and that was the bug
+    repeating itself.
+
+    It was swept behind the override by ``assignment_rows``, which was "everything that is not
+    a gate" - so the only control for a misdetected machine sat under "Attest a different
+    listing", and a reviewer correcting a machine's kind is not attesting a different listing.
+    Reported, like the embargo before it, as there being no way to do it at all.
+    """
+    run = _run(submitter)
+    client.force_login(reviewer)
+
+    body = client.get(reverse("review:run_detail", args=[run.pk])).content.decode()
+
+    for field in ("machine_kind", "name", "vendor_name", "model_number"):
+        needle = f'name="{field}"'
+        # Once, not merely once-uncollapsed. Taking these out of ``assignment_rows`` is what
+        # moves them; leaving them in both groups renders each box twice - visible one place
+        # and hidden the other - and ``_collapsed`` reads the first occurrence, so it would
+        # call that a pass.
+        assert body.count(needle) == 1, f"{field} is rendered {body.count(needle)} times"
+        assert not _collapsed(body, needle)
 
 
 def test_a_run_against_a_live_listing_can_still_be_withheld(client, submitter, reviewer):

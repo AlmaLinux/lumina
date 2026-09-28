@@ -175,13 +175,11 @@
       {% endif %}
 
       <dl class="row mb-0 small">
-        {% if effect.creates %}
-          <dt class="col-sm-4">Vendor</dt><dd class="col-sm-8">{{ effect.vendor|default:"-" }}</dd>
-          <dt class="col-sm-4">Name</dt><dd class="col-sm-8">{{ effect.name|default:"-" }}</dd>
-          {% if effect.model_number %}
-            <dt class="col-sm-4">Model number</dt><dd class="col-sm-8">{{ effect.model_number }}</dd>
-          {% endif %}
-        {% endif %}
+        {% comment %}Vendor, name, and model number were read-only rows here. They are now the
+           prefilled boxes in "The machine this creates" below, which carry the same values and
+           are the place to change them - one list with both the status and the controls, the
+           way the component ties were unified for the same reason. Rendering both put the same
+           three values twice on one page.{% endcomment %}
         {% comment %}Evidence and declaration are different things and were shown as one. This
            row said "AlmaLinux claimed: 9.8+, 10.2+" for a run that will record 9.8 alone: the
            run proves the release it passed on, and the submitter's other ticks are declared
@@ -304,6 +302,27 @@
          posting the gates alone would unlink the run's listings.{% endcomment %}
       <form method="post" action="{% url 'review:run_assign_listing' run.pk %}">
         {% csrf_token %}
+        {% comment %}Shown outright, not behind the override below. The machine kind control
+           already existed and rendered inside that collapsed block, labelled "Attest a
+           different listing" - so a reviewer correcting a misdetected machine had no reason to
+           open the one place that could do it, and reported having no way to do it at all.
+           That is exactly what happened to the embargo gates, which is why they are up here
+           too: a control filed under an unrelated heading may as well not exist.
+
+           Absent when approval reuses a listing the catalog already holds, because it renames
+           nothing - see ``_prefill_identity``.{% endcomment %}
+        {% if assign_form.identity_rows %}
+          <h3 class="h6 mb-1">The machine this creates</h3>
+          <p class="text-secondary small mb-2">
+            What approving will put in the catalog, filled in as it stands. Each box says
+            whether the value came from the machine's own firmware or from the submitter, so a
+            correction is visible as a correction. Changing one here is remembered against this
+            machine's firmware strings, so later runs of it land on the same answer.
+          </p>
+          {% for row in assign_form.identity_rows %}
+            {% include "results/_form_field.html" with field=row.field %}
+          {% endfor %}
+        {% endif %}
         <h3 class="h6 mb-1">Withhold this run</h3>
         <p class="text-secondary small mb-2">
           Two reasons a run can be held back, and they are independent: the hardware is not

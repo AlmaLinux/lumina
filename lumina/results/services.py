@@ -516,6 +516,26 @@ def _parts_capped_below(run: TestRun, level: str) -> list[dict]:
     return capped
 
 
+def reported_machine_identity(run: TestRun) -> tuple[str, str, str]:
+    """What the firmware itself said this machine is: (vendor, name, model number).
+
+    A custom build is identified by its board, so its strings come from the baseboard tables
+    and a vendor system's from the system tables. Keyed on the *detected* kind rather than
+    ``effective_system_kind``: this answers "what did the report say", which is the thing a
+    reviewer is comparing the submitter's answer against, and reading a correction back into
+    it would compare the correction with itself.
+
+    One function because two readers must agree about it - the effect box, which tells a
+    reviewer what approval will use, and the identity controls, which say which of those
+    values a human supplied. A reviewer told "the submitter changed this" about a string the
+    firmware never reported is being pointed at the wrong person.
+    """
+    if run.system_kind == SystemKind.CUSTOM:
+        return (run.board_vendor or "", run.board_model or "", "")
+    return (run.system_vendor or "", run.system_product or "",
+            run.system_model_number or "")
+
+
 def proposal_effect(run: TestRun) -> dict:
     """What approving this run would do to the catalog, as plain data for a reviewer.
 
@@ -576,10 +596,7 @@ def proposal_effect(run: TestRun) -> dict:
             ),
         }
 
-    if run.system_kind == SystemKind.CUSTOM:
-        reported_vendor, reported_name = run.board_vendor, run.board_model
-    else:
-        reported_vendor, reported_name = run.system_vendor, run.system_product
+    reported_vendor, reported_name, _ = reported_machine_identity(run)
 
     level = _incoming_level(run, listing, proposal.get("vendor_name") or reported_vendor or "")
 
@@ -2542,6 +2559,7 @@ def assign_listing(
     level: str = "",
     components=None,
     machine_kind: str = "",
+    identity: dict | None = None,
     available_from_minor: int | None = None,
     set_available_from_minor: bool = False,
     pre_release: bool = False,
@@ -2583,13 +2601,41 @@ def assign_listing(
         run.pre_release = bool(pre_release)
         run.publish_requested_date = publish_requested_date
         fields += ["pre_release", "publish_requested_date"]
+    # The machine's identity, corrected by the reviewer. Written into the proposal rather than
+    # onto the run, because the proposal is what ``create_listings_from_run`` reads and what
+    # ``record_identity_alias`` then keys the mapping on - so one edit here both names the
+    # listing approval creates and teaches the catalog what these firmware strings mean, with
+    # no second path to keep in step.
+    proposal = dict(run.listing_proposal or {})
+    changed_identity = {}
     if machine_kind in (SystemKind.PREBUILT, SystemKind.CUSTOM):
         # Recorded on the run so the alias can carry it: a machine whose
         # firmware misidentifies it needs the correction to outlive this run.
-        proposal = dict(run.listing_proposal or {})
+        if proposal.get("machine_kind") != machine_kind:
+            changed_identity["machine_kind"] = machine_kind
         proposal["machine_kind"] = machine_kind
+    for field, value in (identity or {}).items():
+        value = (value or "").strip()
+        # Blank is "leave it alone" for the two that name the machine, and a real answer for
+        # the part code. A machine has to be called something, so emptying the vendor or the
+        # name is a slip rather than a decision - there is no listing to create at the end of
+        # it. A part code is genuinely optional, and clearing one the submitter guessed at is
+        # the only way to get rid of it.
+        if not value and field in ("vendor_name", "name"):
+            continue
+        if proposal.get(field, "") != value:
+            changed_identity[field] = value
+        proposal[field] = value
+    if changed_identity:
         run.listing_proposal = proposal
         fields.append("listing_proposal")
+        log_action(
+            "test_run.identity_corrected", target=run, actor=by,
+            after={"corrected": changed_identity,
+                   "reported": dict(zip(
+                       ("vendor_name", "name", "model_number"),
+                       reported_machine_identity(run), strict=True))},
+        )
     run.save(update_fields=fields)
     # Clearing the embargo on a run that is approved but held is how a hold with no date ends:
     # nothing is scheduled for it, because there is no date to schedule against. Done here so

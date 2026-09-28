@@ -4,12 +4,17 @@ from __future__ import annotations
 from django import forms
 from django.conf import settings
 from django.utils.html import format_html, format_html_join
+from django.utils.safestring import mark_safe
 
 from lumina.core.certification import ValidationLevel
 from lumina.core.forms import bootstrapify
 from lumina.core.models import URL_MAX_LENGTH
 from lumina.hardware.models import Component, System
 from lumina.results import proposal_keys
+from lumina.results.services import (
+    existing_listing_for,
+    reported_machine_identity,
+)
 
 
 class ComboBoxInput(forms.TextInput):
@@ -1533,6 +1538,36 @@ class RunListingAssignForm(forms.Form):
                   "lands in. The listing publishes either way and carries a note naming this "
                   "minor until it ships. Blank means nothing to wait for.",
     )
+    # The machine's identity, as approval will use it.
+    #
+    # These were not offered at all, and the reviewer's only remedy for a wrong name was to
+    # send the run back and ask the submitter to retype it. That sat oddly beside
+    # ``RunComponentTiesForm``, which lets a reviewer rewrite a *part's* vendor and model
+    # outright on the grounds that they "often know the catalog better... and they are the
+    # last person who can fix it before approval creates the entries" - an argument that
+    # applies at least as strongly to the machine, which is the listing everything else hangs
+    # off.
+    #
+    # Prefilled with what approval would use, so leaving them alone changes nothing and the
+    # boxes double as the statement of what is about to happen. ``identity_rows`` puts the
+    # firmware's own string beside each one, so a reviewer can see which of these a human
+    # supplied rather than having to guess from the value.
+    vendor_name = forms.CharField(
+        max_length=120, required=False, label="Vendor",
+        help_text="Matched against existing vendors, so aliases like “Dell” and "
+                  "“Dell Inc.” land on the same one.",
+    )
+    name = forms.CharField(
+        max_length=200, required=False, label="Displayed name",
+        help_text="How this machine is shown throughout the catalog and what people "
+                  "search for. Not a part code - that goes below.",
+    )
+    model_number = forms.CharField(
+        max_length=120, required=False, label="Model number",
+        help_text="The vendor's own part or machine-type code, e.g. “21K9001NUS”. "
+                  "Recorded alongside the name and never displayed in place of it. "
+                  "Emptying this box clears it.",
+    )
     machine_kind = forms.ChoiceField(
         choices=[("", "- Leave as detected -")] + [
             ("prebuilt", "A vendor-built system, with its own model name"),
@@ -1555,10 +1590,18 @@ class RunListingAssignForm(forms.Form):
     # that way. Withholding a run and re-pointing it at another listing are unrelated decisions;
     # only the second is an override of what the page already says.
     GATE_FIELDS = ("pre_release", "publish_requested_date", "available_from_minor")
+    # Shown beside the identity they correct, and deliberately not inside the assignment
+    # override. ``machine_kind`` lived there because "everything that is not a gate" swept it
+    # in, which meant the one control for a misdetected machine sat behind a disclosure
+    # labelled "Attest a different listing" - and a reviewer fixing a machine's kind is not
+    # attesting a different listing, so they never opened it. That is the same failure the
+    # embargo gates were moved out for, one field along.
+    IDENTITY_FIELDS = ("vendor_name", "name", "model_number", "machine_kind")
 
     def __init__(self, *args, run=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.run = run
+        self._prefill_identity()
         # A scoped run has no system to assign, so the picker is removed rather than offered and
         # rejected. ``assign_listing`` raises ``ReviewError`` if a System arrives for one, which is
         # the right backstop and a poor interface: the reviewer was shown a dropdown of every
@@ -1567,10 +1610,13 @@ class RunListingAssignForm(forms.Form):
         # the bound form, so a hand-crafted POST cannot smuggle one past the page either.
         if run is not None and run.is_scoped:
             del self.fields["system"]
-            # Both describe the machine as the subject of a listing, which a scoped run never
-            # produces. ``machine_kind`` is read only by ``create_listings_from_run``'s machine
-            # branches, which a scoped run does not reach.
-            del self.fields["machine_kind"]
+            # All of them describe the machine as the subject of a listing, which a scoped run
+            # never produces. ``machine_kind`` and the identity boxes are read only by
+            # ``create_listings_from_run``'s machine branches, which a scoped run does not reach.
+            # ``pop`` rather than ``del``: ``_prefill_identity`` has already run and removes
+            # these when approval would reuse an existing listing, so some may be gone.
+            for field in self.IDENTITY_FIELDS:
+                self.fields.pop(field, None)
             kinds = " and ".join(run.scope_labels)
             self.fields["components"].help_text = (
                 f"The {kinds} this run is evidence for. Approving ties and attests these and "
@@ -1585,17 +1631,124 @@ class RunListingAssignForm(forms.Form):
                 "vendor makes."
             )
 
+    def _prefill_identity(self) -> None:
+        """Fill the identity boxes with what approving would use, and remove them when it
+        would use none of it.
+
+        Prefilled rather than blank so the boxes state what is about to happen as well as
+        offering to change it, which is why the read-only rows above them went: the same three
+        values rendered twice on one page, with the editable copy blank, reads as two
+        different answers.
+
+        Dropped outright on a run that reuses a listing the catalog already holds.
+        ``create_listings_from_run`` reuses that listing as it stands and renames nothing, so
+        an identity box there would take a reviewer's correction and silently discard it - the
+        failure the effect box was rebuilt to stop telling.
+        """
+        if self.run is None:
+            return
+        # Removal runs on the bound form too, and that is not tidiness: deleting the field
+        # unbinds it, so the boxes being absent from the page is enforced rather than merely
+        # rendered. Guarding this whole method on ``is_bound`` left a POST able to rename a
+        # listing the page never offered to rename.
+        if existing_listing_for(self.run) is not None:
+            for field in self.IDENTITY_FIELDS:
+                self.fields.pop(field, None)
+            return
+        # The prefill is for rendering only. On a bound form the posted values are the
+        # answer, and ``initial`` would be read in place of a box the reviewer emptied.
+        if self.is_bound:
+            return
+        proposal = self.run.listing_proposal or {}
+        reported = self._reported_identity()
+        for field in ("vendor_name", "name", "model_number"):
+            self.fields[field].initial = (
+                proposal.get(field) or reported.get(field) or "")
+        self.fields["machine_kind"].initial = proposal.get("machine_kind") or ""
+        # Set here rather than in ``identity_rows``, which is a property the template may read
+        # more than once - appending there would stack the same sentence up behind itself.
+        for name in self.IDENTITY_FIELDS:
+            self.fields[name].help_text = format_html(
+                "{} {}", self._provenance(name), self.fields[name].help_text)
+
+    def _reported_identity(self) -> dict:
+        """What the firmware said, per identity field."""
+        reported = dict(zip(
+            ("vendor_name", "name", "model_number"),
+            reported_machine_identity(self.run), strict=True))
+        reported["machine_kind"] = self.run.system_kind
+        return reported
+
+    def _overridden(self, name: str) -> bool:
+        """Whether the submitter supplied this value rather than the machine.
+
+        True only when they gave one *and* it differs from the report. A submitter who
+        retyped the firmware's own string changed nothing, and flagging that would send a
+        reviewer looking for a disagreement that is not there.
+        """
+        submitted = ((self.run.listing_proposal or {}).get(name) or "").strip()
+        return bool(submitted) and submitted != self._reported_identity().get(name, "")
+
+    def _provenance(self, name: str):
+        """Who supplied the value in this box, as a sentence to open its help text.
+
+        The point of the row, not decoration. A reviewer weighing a name needs to know
+        whether they are reading what the machine reported or something a person typed over
+        it, and the value alone cannot say: "PowerEdge R760" looks identical either way.
+        """
+        from lumina.results.models import SystemKind
+
+        # Imported here like every other use of it in this module: the models import forms
+        # back, so a module-level one closes the loop.
+        kind_words = {
+            SystemKind.PREBUILT: "a vendor-built system",
+            SystemKind.CUSTOM: "a custom build",
+        }
+        reported = self._reported_identity().get(name, "")
+        shown = kind_words.get(reported, reported) if name == "machine_kind" else reported
+        if self._overridden(name):
+            if shown:
+                return format_html(
+                    '<strong class="text-warning-emphasis">Submitter\'s correction.</strong> '
+                    "The report said “{}”.", shown)
+            return mark_safe(  # noqa: S308 - a literal, no interpolation
+                '<strong class="text-warning-emphasis">Submitter\'s answer.</strong> '
+                "The report named none.")
+        if shown:
+            return format_html("From the machine's own firmware (“{}”).", shown)
+        return "The firmware reported none of this."
+
     @property
     def gate_rows(self):
         """The withhold controls, shown outright."""
         return [self[name] for name in self.GATE_FIELDS if name in self.fields]
 
     @property
+    def identity_rows(self) -> list[dict]:
+        """The identity boxes, each with the firmware's own string and who supplied the value.
+
+        The provenance is the point of the row rather than decoration. A reviewer weighing a
+        name needs to know whether they are looking at what the machine reported or at
+        something a submitter typed over it, and the value alone cannot say: "PowerEdge R760"
+        looks identical whether DMI produced it or a person did.
+        """
+        if self.run is None:
+            return []
+        reported = self._reported_identity()
+        return [
+            {
+                "field": self[name],
+                "reported": reported.get(name, ""),
+                "overridden": self._overridden(name),
+            }
+            for name in self.IDENTITY_FIELDS if name in self.fields
+        ]
+
+    @property
     def assignment_rows(self):
         """Everything else: which listings this run attests, and at what ceiling."""
-        return [
-            self[name] for name in self.fields if name not in self.GATE_FIELDS
-        ]
+        skip = set(self.GATE_FIELDS) | set(self.IDENTITY_FIELDS)
+        return [self[name] for name in self.fields if name not in skip]
 
     @property
     def identity_summary(self) -> str:

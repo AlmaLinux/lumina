@@ -106,6 +106,15 @@ def run_assign_listing(request: HttpRequest, pk: int) -> HttpResponse:
             components=form.cleaned_data["components"],
             level=form.cleaned_data.get("claimed_validation_level", ""),
             machine_kind=form.cleaned_data.get("machine_kind", ""),
+            # ``.get`` for the same reason as ``system``: these are removed outright for a
+            # scoped run and for one that reuses an existing listing, so they are absent from
+            # ``cleaned_data`` rather than blank - and absent has to mean "not offered, do not
+            # touch the proposal", not "cleared".
+            identity={
+                field: form.cleaned_data[field]
+                for field in ("vendor_name", "name", "model_number")
+                if field in form.cleaned_data
+            },
             available_from_minor=form.cleaned_data.get("available_from_minor"),
             # These fields are always on this form, so a blank box is a decision to clear rather
             # than silence. That is what lets a reviewer end a hold as well as start one.
