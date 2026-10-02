@@ -220,6 +220,20 @@ OIDC_RP_SIGN_ALGO = "RS256"
 # Keycloak's own username for the account, rather than mozilla-django-oidc's default base64 SHA-224
 # of the email address. See ``lumina.accounts.auth.username_from_claims``.
 OIDC_USERNAME_ALGO = "lumina.accounts.auth.username_from_claims"
+# Which claim carries that username, tried in order; the first usable one wins.
+#
+# Configuration rather than a constant because the answer is a property of the realm, not of this
+# application. ``preferred_username`` is the standard OIDC claim and is what the default "profile"
+# scope delivers; a realm that publishes a dedicated ``username`` mapper is naming the same thing
+# through a claim it controls, which is the stronger guarantee of the two - so it is tried first
+# and the standard claim backs it up.
+#
+# Set it to a single name to pin it: ``LUMINA_OIDC_USERNAME_CLAIMS=username``. Both are listed by
+# default because a deployment whose realm has no such mapper would otherwise fall through to the
+# hash for every account, and under the matching below that means a *new* account for every
+# existing person - a worse failure than the one this ordering exists to fix.
+LUMINA_OIDC_USERNAME_CLAIMS = env_list(
+    "LUMINA_OIDC_USERNAME_CLAIMS", ["username", "preferred_username"])
 # Deliberately does NOT ask for a "groups" scope, though group membership is exactly what this
 # application needs from Keycloak.
 #

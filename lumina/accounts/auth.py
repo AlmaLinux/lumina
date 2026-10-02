@@ -30,29 +30,49 @@ _USERNAME_VALIDATOR = UnicodeUsernameValidator()
 _USERNAME_MAX = 150
 
 
+def claimed_username(claims: dict[str, Any] | None) -> str:
+    """The Keycloak username these claims carry, or "" if they carry none usable.
+
+    Tried in the order ``settings.LUMINA_OIDC_USERNAME_CLAIMS`` lists, first usable one winning,
+    because which claim publishes the username is a property of the realm rather than of this
+    application.
+
+    Returns "" rather than a fallback on purpose: the caller that *names* an account can settle for
+    a hash, but the caller that *matches* one must be able to tell "the realm said harriebird" from
+    "the realm said nothing", and a fallback would make a derived string look like a claim.
+
+    Nothing here may raise. It runs inside the login, and a malformed claim should cost a readable
+    username, not the session.
+    """
+    for name in settings.LUMINA_OIDC_USERNAME_CLAIMS:
+        candidate = ((claims or {}).get(name) or "")
+        if not isinstance(candidate, str):
+            continue
+        candidate = candidate.strip()
+        if not candidate or len(candidate) > _USERNAME_MAX:
+            continue
+        try:
+            _USERNAME_VALIDATOR(candidate)
+        except ValidationError:
+            continue
+        return candidate
+    return ""
+
+
 def username_from_claims(email: str | None, claims: dict[str, Any] | None = None) -> str:
     """The Django username for a Keycloak account: its own username.
 
     mozilla-django-oidc's default is a base64 SHA-224 of the email address, on the reasoning that
     usernames are often public identifiers and an email address should not be. That is sound for a
-    provider that gives you nothing better, and wrong here: Keycloak sends ``preferred_username``,
-    which *is* the account's name and is no more sensitive than the person's own login. The default
-    put a 38-character hash in the navigation bar where a name belongs, and it looked enough like an
+    provider that gives you nothing better, and wrong here: Keycloak publishes the account's own
+    username, which is no more sensitive than the person's own login. The default put a
+    38-character hash in the navigation bar where a name belongs, and it looked enough like an
     opaque database key to be reported as one.
 
-    Falls back to the hash rather than inventing something when the claim is absent, empty, too long
-    for the field, or contains characters the username validator rejects. Nothing here may raise:
-    this runs inside the login, and a bad claim should cost a pretty username, not the session.
+    Falls back to the hash when the realm published nothing usable, so a bad claim costs a pretty
+    username rather than the login.
     """
-    candidate = ((claims or {}).get("preferred_username") or "").strip()
-    if candidate and len(candidate) <= _USERNAME_MAX:
-        try:
-            _USERNAME_VALIDATOR(candidate)
-        except ValidationError:
-            pass
-        else:
-            return candidate
-    return default_username_algo(email, claims)
+    return claimed_username(claims) or default_username_algo(email, claims)
 
 
 def claimed_group_keys(
@@ -142,22 +162,68 @@ class LuminaOIDCBackend(OIDCAuthenticationBackend):
             user.save(update_fields=["is_staff", "is_superuser"])
 
     @override
+    def filter_users_by_claims(self, claims):
+        """Find the account these claims belong to, by username before email.
+
+        The library matches on email alone. That broke a login outright: a person whose Keycloak
+        email had changed since their account was made matched nothing, so the backend went on to
+        *create* an account - with the username they already had. ``username`` is unique, so the
+        insert raised ``IntegrityError`` and returned a 500, identically on every retry. There is
+        no self-service way out of that; the account is simply locked out.
+
+        The realm guarantees usernames are unique and never change, which makes the username the
+        stable identifier here and the email the mutable attribute - the opposite of the order the
+        library assumes. So the username is tried first, and ``update_user`` carries the new email
+        onto the account rather than treating it as a different person.
+
+        Email remains the fallback, and is not vestigial: accounts created before Keycloak's
+        username was adopted still carry the hash, so their rows cannot be found by username at
+        all. They match by email, and ``_adopt_username`` then moves them onto their real name,
+        after which they match by username like everybody else.
+        """
+        username = claimed_username(claims)
+        if username:
+            by_username = self.UserModel.objects.filter(username=username)
+            if by_username.exists():
+                return by_username
+        return super().filter_users_by_claims(claims)
+
+    @override
     def create_user(self, claims):
         user = super().create_user(claims)
         self._sync_groups(user, claims)
         return user
+
+    def _adopt_email(self, user, claims: dict[str, Any]) -> None:
+        """Keep the account's email in step with the realm's.
+
+        The library's ``update_user`` returns the user untouched, which was harmless while email
+        was the thing accounts were found by - a changed address simply made a new account. Now
+        that the username is what matches, a stale address would persist forever on an account
+        that keeps signing in happily, and every notification this platform sends would go to an
+        address its owner has already abandoned.
+        """
+        email = (claims.get("email") or "").strip()
+        if email and email != user.email:
+            user.email = email
+            user.save(update_fields=["email"])
 
     def _adopt_username(self, user, claims: dict[str, Any]) -> None:
         """Move an existing account onto its Keycloak username.
 
         Without this, only accounts created after the change get a readable name and everyone who
         had already signed in keeps their hash for good, because ``get_username`` is consulted on
-        creation and never again. Safe to do, and this is the reason it is safe: mozilla-django-oidc
-        matches users by **email** (``filter_users_by_claims``), so the username is a label and
-        nothing resolves through it.
+        creation and never again.
 
-        Left alone when somebody else already holds the name. A rename is cosmetic and losing a
-        login to an IntegrityError over it would not be.
+        This is also how a legacy account stops being legacy. ``filter_users_by_claims`` matches on
+        username first and falls back to email; a hash-named account can only be found by the
+        fallback, and renaming it here is what moves it onto the primary match for every login
+        after this one.
+
+        Left alone when somebody else already holds the name. The rename is not worth a failed
+        login, and under username matching a collision here would mean the realm has handed one
+        name to two accounts - which is the realm's to resolve, not ours to paper over by
+        reassigning somebody's identity.
         """
         wanted = username_from_claims(claims.get("email"), claims)
         if user.username == wanted:
@@ -177,6 +243,7 @@ class LuminaOIDCBackend(OIDCAuthenticationBackend):
     def update_user(self, user, claims):
         user = super().update_user(user, claims)
         self._adopt_username(user, claims)
+        self._adopt_email(user, claims)
         self._sync_groups(user, claims)
         return user
 
