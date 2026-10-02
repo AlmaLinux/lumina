@@ -208,9 +208,13 @@
                   {{ c.requester }}
                   <div class="text-secondary">{{ c.work_email }}</div>
                 </td>
-                <td class="small">
+                <td class="small review-statement">
                   {{ c.role_at_vendor }}
-                  {% if c.note %}<div class="text-secondary">{{ c.note|truncatechars:90 }}</div>{% endif %}
+                  {% comment %}Whole, not truncated. Approving hands this person ownership of
+                     the vendor and every unmaintained listing attributed to it, and this note
+                     is the case they made for it - so cutting it at 90 characters removed the
+                     evidence from the one page that shows it.{% endcomment %}
+                  {% if c.note %}<div class="text-secondary">{{ c.note|linebreaksbr }}</div>{% endif %}
                   {% if c.evidence %}
                     <div><a href="{{ c.evidence.url }}">Attached evidence</a></div>
                   {% endif %}
@@ -266,7 +270,10 @@
               <tr>
                 <td class="text-secondary small">{{ r.submitted_at|date:"Y-m-d H:i" }}</td>
                 <td class="small">{{ r.requester }}</td>
-                <td class="small">{{ r.justification|truncatechars:160 }}</td>
+                {% comment %}Whole, for the reason the claim note above is: this is what the
+                   reviewer is deciding on, and there is no detail page to read the rest
+                   on.{% endcomment %}
+                <td class="small review-statement">{{ r.justification|linebreaksbr }}</td>
                 <td><span class="status-pill status-{{ r.status }}">{{ r.get_status_display }}</span></td>
                 <td class="text-end">
                   <form method="post" action="{% url 'review:survey_token_approve' r.pk %}" class="d-inline mb-1">

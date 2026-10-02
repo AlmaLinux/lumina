@@ -123,6 +123,20 @@ body.lumina-admin {
 .status-approved      { background: #d1e7dd; color: #0f5132; }
 .status-rejected      { background: #f8d7da; color: #842029; }
 
+/* Review queue: the free text a decision is being made about -----------
+   The claimant's note and the token requester's justification are the evidence a
+   reviewer weighs, and the queue is the only page either one appears on - neither has a
+   detail view. Both were cut with ``truncatechars`` and the remainder was simply
+   unreachable: no link, no tooltip, nothing. Reported as not being able to see all of
+   the text submitted.
+
+   So it is shown whole and given a readable measure instead. Without a bound the cell
+   stretches until the Decision column is squeezed off the side of the table; without
+   ``min-width`` a short note lets the column collapse to nothing next to a long one.
+   ``overflow-wrap`` is for the thing a reviewer is quite likely to be sent: an
+   unbroken URL as "evidence", which would otherwise push the table wide on its own. */
+.review-statement { min-width: 18rem; max-width: 34rem; overflow-wrap: anywhere; }
+
 /* Submit form: per-category picker block ------------------------------- */
 .category-picker { padding: 0.5rem 0; }
 .category-picker .checkbox-list {
