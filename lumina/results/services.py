@@ -92,13 +92,19 @@ def existing_listing_for(run: TestRun):
     A custom build is identified by its motherboard, so that is the listing for this
     purpose - the same rule ``missing_submission_details`` applies.
     """
-    # A disputed identity makes this new hardware, whatever was matched or linked before. Every
+    # A link first, then the dispute. Disputing clears the link it disputes - both the
+    # submitter's form and ``separate_run_from_listing`` unset it - so any link a disputed run
+    # carries was made afterwards, deliberately: the listing approval created for it, or one a
+    # reviewer picked. Checked the other way round, a separated run already living on its own new
+    # listing was still described as "Approving creates a listing", with the name boxes offered
+    # again, and a reviewer re-pointing it could not tell from the page where it would land.
+    if run.listing_system_id:
+        return run.listing_system
+    # A disputed identity makes an *unlinked* run new hardware, whatever its strings match. Every
     # caller keys off this - the gate, the identity fields, the attribution list - so one flag
     # turns the whole page back into "describe this machine".
     if run.identity_disputed:
         return None
-    if run.listing_system_id:
-        return run.listing_system
     return matched_listing(run)
 
 
@@ -2343,6 +2349,28 @@ def _accept_survey_forks(run, *, by) -> None:
     accept_forks_for_run(run, by=by)
 
 
+def _needs_machine_listing(run: TestRun) -> bool:
+    """Whether approving has to resolve or create the machine's listing first.
+
+    It used to be "no system and no components", which read a linked component as proof the
+    machine was listed. That holds for a custom build, whose linked motherboard *is* its listing -
+    and where calling ``create_listings_from_run`` anyway could mint a duplicate board, since a
+    board linked through an alias is linked precisely because its strings do not name it.
+
+    It does not hold for a vendor-built machine. Its parts are tied at approval, so a run approved
+    once and then reopened arrives with components and no System, and approval skipped creation:
+    separating a reopened run and approving it again left it attached to no system at all, with
+    its old evidence still on the listing it had been separated from. So for a vendor-built
+    machine only the System decides. ``create_listings_from_run`` then either finds the listing
+    its strings match or, for a disputed identity, creates a new one.
+    """
+    if run.listing_system_id:
+        return False
+    if not run.listing_components.exists():
+        return True
+    return not run.is_scoped and run.effective_system_kind == SystemKind.PREBUILT
+
+
 def approve_run(run: TestRun, *, by, notes: str = "") -> TestRun:
     """Approve a run, publishing it unless it is embargoed.
 
@@ -2382,9 +2410,7 @@ def approve_run(run: TestRun, *, by, notes: str = "") -> TestRun:
     # honest outcome: the reviewer has to say what this hardware is before
     # certifying it.
     listings_created = []
-    if run.run_type == RunType.validate.value and not (
-        run.listing_system_id or run.listing_components.exists()
-    ):
+    if run.run_type == RunType.validate.value and _needs_machine_listing(run):
         listings_created = [
             listing.pk for listing in create_listings_from_run(run, by=by)
         ]
@@ -2639,12 +2665,13 @@ def separate_run_from_listing(run: TestRun, *, by, identity: dict | None = None)
             )
 
         approved = run.status == TestRun.STATUS_APPROVED
+        counted = _counted_toward(run, old)
         run.identity_disputed = True
         run.listing_system = None
         run.save(update_fields=["identity_disputed", "listing_system", "listing_proposal"])
 
         withdrawn = 0
-        if approved:
+        if counted:
             withdrawn = _withdraw_from_listing(run, old)
 
         created = []
@@ -2663,6 +2690,21 @@ def separate_run_from_listing(run: TestRun, *, by, identity: dict | None = None)
                "listings": [str(listing) for listing in created]},
     )
     return run
+
+
+def _counted_toward(run: TestRun, listing: System) -> bool:
+    """Whether an approval ever folded this run's evidence into ``listing``.
+
+    Not "is it approved now": a run set back to pending in the admin keeps everything its first
+    approval wrote, and asking the status left that evidence on a listing the run was being moved
+    off. Nor "does it have linked parts": a reviewer can attach parts to a run nobody has approved,
+    and withdrawing from a listing such a run never counted toward would unpublish it if it had no
+    attestations of its own - a vendor's declared listing, say.
+    """
+    from lumina.hardware.models import CommunityAttestation
+
+    return run.status == TestRun.STATUS_APPROVED or CommunityAttestation.objects.filter(
+        test_run=run, listing_system=listing).exists()
 
 
 def _withdraw_from_listing(run: TestRun, old: System) -> int:
@@ -2826,6 +2868,12 @@ def assign_listing(
                 "machine, correct its kind to vendor-built first."
             )
         )
+    # Moving a run off a listing an approval already counted it toward. Re-pointing only ever
+    # added: the new listing gained the run and the old one kept its attestation and its parts,
+    # so one run's evidence was counted on two machines - reproduced by reopening a run in the
+    # admin and picking another system under "Attest an existing listing instead".
+    previous = run.listing_system if run.listing_system_id else None
+    leaving = previous is not None and previous != system and _counted_toward(run, previous)
     run.listing_system = system
     if level:
         run.claimed_validation_level = level
@@ -2843,6 +2891,14 @@ def assign_listing(
     if correct_identity(run, by=by, machine_kind=machine_kind, identity=identity):
         fields.append("listing_proposal")
     run.save(update_fields=fields)
+    if leaving:
+        withdrawn = _withdraw_from_listing(run, previous)
+        log_action(
+            "test_run.reassigned", target=run, actor=by,
+            before={"listing": str(previous), "listing_pk": previous.pk},
+            after={"listing": str(system) if system else None,
+                   "attestations_withdrawn": withdrawn},
+        )
     # Clearing the embargo on a run that is approved but held is how a hold with no date ends:
     # nothing is scheduled for it, because there is no date to schedule against. Done here so
     # the reviewer's one edit both records the decision and carries it out.

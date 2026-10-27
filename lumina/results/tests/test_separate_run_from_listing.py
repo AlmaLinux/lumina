@@ -84,6 +84,26 @@ def test_a_pending_run_stops_being_evidence_for_the_match(poweredge, reviewer):
     assert run.listing_proposal["name"] == "Acme Box 1"
 
 
+def test_separating_a_run_never_counted_leaves_the_old_listing_alone(poweredge, reviewer):
+    """Nothing to withdraw, so nothing may be touched. The withdrawal unpublishes a listing it
+    leaves with no attestations - and a listing published on its vendor's declaration alone has
+    none to begin with, so running it here would take that listing out of the catalog for a run
+    that never counted toward it."""
+    from lumina.releases.models import AlmaLinuxRelease
+
+    ListingVersion.objects.create(
+        listing_system=poweredge, source=ListingVersion.SOURCE_RUN,
+        release=AlmaLinuxRelease.objects.get_or_create(major=10, defaults={"supported": True})[0])
+    run = _run()
+
+    services.separate_run_from_listing(run, by=reviewer, identity=ACME)
+
+    poweredge.refresh_from_db()
+    assert poweredge.published is True
+    assert ListingVersion.objects.get(
+        listing_system=poweredge, release__major=10).source == ListingVersion.SOURCE_RUN
+
+
 def test_approving_it_then_creates_its_own_listing(poweredge, reviewer):
     """The flag is what makes this stick. Clearing the picker alone did not: approval matched
     the same listing again by its strings."""
@@ -464,3 +484,214 @@ def test_a_custom_build_is_told_about_the_kind_not_the_separate_control(client, 
 
     assert "correct its kind to vendor-built" in said
     assert "Give it a listing of its own" not in said
+
+
+# --- a run reopened by setting it back to pending ---------------------------------------
+#
+# Asked: if an admin sets an approved run back to pending and approves it again, does it make
+# the new system? The admin's status field is a plain write, so reopening keeps everything the
+# first approval recorded - the attestation, and the parts tied onto the System. Two things
+# assumed "pending" meant "never counted": approval, which skipped creating a listing because
+# parts were already tied, and separation, which only withdrew evidence from approved runs.
+# Together they left a reopened, separated run attached to no system, with its old evidence
+# still on the listing it had been separated from.
+
+
+def _reopen(run, **fields) -> TestRun:
+    """What saving the admin change form does: the edited fields, written straight."""
+    run.status = TestRun.STATUS_PENDING
+    for name, value in fields.items():
+        setattr(run, name, value)
+    run.save()
+    return run
+
+
+def test_reopening_and_approving_alone_keeps_the_match(poweredge, reviewer):
+    """The control. Reopening is not a statement that the machine is different, so approving
+    again re-attests what it matched - and adds nothing, since attestations are one per person
+    per release."""
+    run = _reopen(_approved(poweredge, reviewer))
+
+    services.approve_run(run, by=reviewer)
+
+    run.refresh_from_db()
+    assert run.listing_system == poweredge
+    assert CommunityAttestation.objects.filter(test_run=run).count() >= 1
+
+
+def test_a_reopened_run_separated_and_approved_gets_its_own_listing(
+        client, poweredge, reviewer):
+    """The question, answered yes. Before the fix this ended with the run attached to nothing
+    and no new listing - the same symptom as the earlier report."""
+    run = _reopen(_approved(poweredge, reviewer))
+
+    client.post(reverse("review:run_separate_listing", args=[run.pk]), ACME)
+    client.post(reverse("review:run_approve", args=[run.pk]), {})
+
+    run.refresh_from_db()
+    assert run.listing_system is not None, "attached to no system: the bug"
+    assert run.listing_system.name == "Acme Box 1"
+
+
+def test_separating_a_reopened_run_withdraws_its_old_evidence(client, poweredge, reviewer):
+    """The other half. Its first approval left an attestation on the old listing, and pending
+    is not the same as never counted."""
+    run = _reopen(_approved(poweredge, reviewer))
+
+    client.post(reverse("review:run_separate_listing", args=[run.pk]), ACME)
+
+    assert not CommunityAttestation.objects.filter(
+        test_run=run, listing_system=poweredge).exists()
+    poweredge.refresh_from_db()
+    assert poweredge.published is False
+
+
+def test_reopening_and_clearing_the_system_in_the_admin_is_not_orphaned(poweredge, reviewer):
+    """The admin form does not go through ``assign_listing``, so the picker refusal cannot
+    reach it. Approval has to land the run somewhere: on the listing its strings resolve to."""
+    run = _reopen(_approved(poweredge, reviewer), listing_system=None)
+
+    services.approve_run(run, by=reviewer)
+
+    run.refresh_from_db()
+    assert run.listing_system == poweredge
+
+
+def test_a_custom_build_with_its_board_linked_stays_off_the_create_path(reviewer, monkeypatch):
+    """Why the old rule read linked parts as "already listed": a custom build's board is its
+    listing, and a board linked through an alias is linked *because* its strings do not name it.
+    The create path resolves the board from those strings, so the change is for vendor-built
+    machines only - asserted on the path taken, since that is what the guard decides."""
+    from lumina.results.component_match import find_or_create_component
+    from lumina.vendors.models import Vendor
+
+    asrock, _ = Vendor.objects.get_or_create(name="ASRock")
+    board, _ = find_or_create_component(asrock, "B650M PG Riptide", ComponentKind.motherboard)
+    ReportedIdentityAlias.objects.create(
+        reported_vendor="ASRock", reported_product="OEM BOARD X", listing_component=board)
+    inventory = f.custom_build_inventory()
+    inventory["summary"]["system"]["product"] = "OEM BOARD X"
+    inventory["summary"]["baseboard"]["product"] = "OEM BOARD X"
+    run = ingest.ingest_bundle(
+        submitter=User.objects.create_user("aliased-builder"), source="api",
+        bundle_file=f.as_upload(f.build_bundle(f.make_report(
+            run_types=["validate"], inventory=inventory,
+            results=[f.validate_result("validate.cpu.functional")],
+        ))),
+    )
+    run = release(TestRun.objects.get(pk=run.pk))
+    assert run.listing_components.filter(pk=board.pk).exists(), "the premise: linked by alias"
+    calls = []
+    real = services.create_listings_from_run
+    monkeypatch.setattr(services, "create_listings_from_run",
+                        lambda r, **kw: calls.append(r.pk) or real(r, **kw))
+
+    services.approve_run(run, by=reviewer)
+
+    assert calls == []
+
+
+# --- re-pointing a reopened run ------------------------------------------------------
+#
+# Reported: "I set it to pending as admin, and now if I 'attest an existing system instead' and
+# select a system and save it, it still seems to have my manual overrides in the form. I'm not
+# sure what would happen if I save it."
+#
+# Two things made that page untrustworthy. It checked the dispute flag before the run's actual
+# link, so a separated run living on its own new listing was still described as "Approving
+# creates a listing" with the name boxes offered again. And re-pointing only ever added: the new
+# listing gained the run while the old one kept its attestation, so saving would have counted one
+# run's evidence on two machines.
+
+
+def _repoint(client, run, system):
+    return client.post(reverse("review:run_assign_listing", args=[run.pk]), {
+        "system": system.pk, "components": [], "claimed_validation_level": "",
+        "machine_kind": "",
+    }, follow=True)
+
+
+def test_a_separated_run_is_described_by_the_listing_it_now_has(client, poweredge, reviewer):
+    """Its link is the answer once it has one. The dispute only stops the run being matched
+    back to the machine it was separated from."""
+    run = _approved(poweredge, reviewer)
+    services.separate_run_from_listing(run, by=reviewer, identity=ACME)
+
+    body = client.get(reverse("review:run_detail", args=[run.pk])).content.decode()
+
+    assert "Approving attests an existing listing" in body
+    assert "Approving creates a listing" not in body
+
+
+def test_a_reopened_linked_run_is_not_offered_the_name_boxes(poweredge, reviewer):
+    """The "manual overrides still in the form": boxes for naming a listing that approval would
+    never create, prefilled with the name given when separating."""
+    run = _approved(poweredge, reviewer)
+    services.separate_run_from_listing(run, by=reviewer, identity=ACME)
+    run = _reopen(TestRun.objects.get(pk=run.pk))
+
+    form = services_form(run)
+
+    assert "name" not in form.fields
+    assert form.identity_rows == []
+
+
+def services_form(run):
+    from lumina.results.forms import RunListingAssignForm
+
+    return RunListingAssignForm(run=run)
+
+
+def test_repointing_a_counted_run_moves_its_evidence(client, poweredge, reviewer):
+    """The save the report was unsure about. One run is one piece of evidence about one
+    machine, so re-pointing it moves the attestation rather than copying it."""
+    other = System.objects.create(vendor=poweredge.vendor, name="PowerEdge R660", published=True)
+    run = _reopen(_approved(poweredge, reviewer))
+
+    _repoint(client, run, other)
+    services.approve_run(TestRun.objects.get(pk=run.pk), by=reviewer)
+
+    assert not CommunityAttestation.objects.filter(
+        test_run=run, listing_system=poweredge).exists()
+    assert CommunityAttestation.objects.filter(test_run=run, listing_system=other).exists()
+
+
+def test_repointing_an_approved_run_moves_it_at_once(client, poweredge, reviewer):
+    """No reopening needed. ``assign_listing`` already certifies the new listing for an approved
+    run, so withdrawing from the old one belongs in the same step."""
+    other = System.objects.create(vendor=poweredge.vendor, name="PowerEdge R660", published=True)
+    run = _approved(poweredge, reviewer)
+
+    _repoint(client, run, other)
+
+    assert not CommunityAttestation.objects.filter(
+        test_run=run, listing_system=poweredge).exists()
+    assert CommunityAttestation.objects.filter(test_run=run, listing_system=other).exists()
+    poweredge.refresh_from_db()
+    assert poweredge.published is False
+    entry = AuditLogEntry.objects.get(action="test_run.reassigned")
+    assert entry.before["listing"] == str(poweredge)
+
+
+def test_repointing_a_run_never_counted_leaves_the_old_listing_alone(client, poweredge, reviewer):
+    """Nothing was recorded, so nothing is withdrawn - and the withdrawal unpublishes a listing it
+    leaves with no attestations, which a vendor's declared listing has none of to begin with."""
+    other = System.objects.create(vendor=poweredge.vendor, name="PowerEdge R660", published=True)
+    run = _run()
+
+    _repoint(client, run, other)
+
+    poweredge.refresh_from_db()
+    assert poweredge.published is True
+    assert not AuditLogEntry.objects.filter(action="test_run.reassigned").exists()
+
+
+def test_reattaching_to_the_same_listing_withdraws_nothing(client, poweredge, reviewer):
+    """Saving the form with the picker untouched posts the current listing back. That is not a
+    move, and treating it as one would unpublish the listing and re-certify it in one save."""
+    run = _approved(poweredge, reviewer)
+
+    _repoint(client, run, poweredge)
+
+    assert CommunityAttestation.objects.filter(test_run=run, listing_system=poweredge).exists()
+    assert not AuditLogEntry.objects.filter(action="test_run.reassigned").exists()
