@@ -116,8 +116,6 @@ def matched_listing(run: TestRun):
     at the listing that was cleared, approval reattaches it. ``assign_listing`` asks this to tell
     the two apart.
     """
-    from lumina.hardware.models import ComponentKind as _ComponentKind
-
     kind = run.effective_system_kind
     if kind == SystemKind.PREBUILT:
         return resolve_reported_system(run)
@@ -125,9 +123,7 @@ def matched_listing(run: TestRun):
         # A custom build's machine listing is the System its board identifies. Prefer that System
         # so a re-validation reads as one and the preview names it; fall back to the board component
         # (before its System exists, or a pre-existing one) so callers still get a listing.
-        board = run.listing_components.filter(
-            kind=_ComponentKind.motherboard.value
-        ).first() or find_matching_board(run.board_vendor, run.board_model)
+        board = known_board(run)
         if board is not None:
             system = system_for_board(board)
             if system is not None:
@@ -1641,6 +1637,9 @@ def preview_component_ties(run: TestRun) -> list[dict]:
                     target["raw_model"], target["kind"], vendor=vendor
                 )
             model = match_component(vendor, target["raw_model"], target["kind"])
+        # The same answer approval gives, or the preview names a board approval will not use.
+        if target["kind"] == ComponentKind.motherboard and not target["overridden"]:
+            model = known_board(run) or model
         key = target["key"]
         preview.append({
             "key": key,
@@ -1777,6 +1776,30 @@ def system_for_board(board):
     return System.objects.filter(vendor=board.vendor, name__iexact=board.name).first()
 
 
+def known_board(run: TestRun):
+    """The motherboard this run's reported board already resolves to, or None.
+
+    Firmware names boards badly - "OEM BOARD X", "Default string" - and a reviewer resolves that
+    once, as a ``ReportedIdentityAlias`` from the reported strings to the real board.
+    ``find_matching_board`` has always honored that alias. The approval tie, the review page's
+    preview of it, the custom build's create path, and the untie path did not: they looked the
+    board up by its raw firmware string, found nothing by that name, and created a board called
+    "OEM BOARD X" beside the real one - on every run of the machine, splitting its evidence across
+    a junk listing.
+
+    The run's own link first, because ingest links the aliased board and a reviewer can link one
+    by hand, and either is a statement about this run. Then ``find_matching_board``, which also
+    covers an alias written after the run arrived, when ingest could not have applied it.
+
+    Callers ask only for the board the machine *reported*. A reviewer's correction of this run's
+    board was made about this machine and outranks a mapping about these strings in general, so a
+    caller resolving a corrected name skips this - and a naming rule, being a pattern about boards
+    in general, does not outrank a human mapping of these exact strings.
+    """
+    linked = run.listing_components.filter(kind=ComponentKind.motherboard.value).first()
+    return linked or find_matching_board(run.board_vendor, run.board_model)
+
+
 def _ensure_custom_system(run: TestRun) -> None:
     """Give a custom build a System listing identified by its motherboard.
 
@@ -1793,10 +1816,7 @@ def _ensure_custom_system(run: TestRun) -> None:
         return
     if run.effective_system_kind != SystemKind.CUSTOM:
         return
-    board = (
-        run.listing_components.filter(kind=ComponentKind.motherboard.value).first()
-        or find_matching_board(run.board_vendor, run.board_model)
-    )
+    board = known_board(run)
     if board is None:
         return
     system = system_for_board(board)
@@ -1851,7 +1871,12 @@ def _untie_excluded(run: TestRun, targets: list[dict], keep: set) -> None:
         vendor = resolve_vendor(target["brand"])
         if vendor is None:
             continue
-        component = _resolve_tied_component(vendor, target["raw_model"], target["kind"])
+        component = None
+        if target["kind"] == ComponentKind.motherboard and not target["overridden"]:
+            # Resolved as the tie was made, or the board an alias linked is never found.
+            component = known_board(run)
+        component = component or _resolve_tied_component(
+            vendor, target["raw_model"], target["kind"])
         if component is None or component.pk in keep:
             continue
         if not run.listing_components.filter(pk=component.pk).exists():
@@ -1929,9 +1954,13 @@ def ensure_component_ties(run: TestRun) -> None:
         kind = target["kind"]
         vendor = _vendor_for(target["brand"])
         if kind == ComponentKind.motherboard:
-            component, created = find_or_create_component(
-                vendor, target["raw_model"], kind, created_by=run.submitter,
-            )
+            # The board a human already identified, unless this run's board was corrected.
+            component = None if target["overridden"] else known_board(run)
+            created = False
+            if component is None:
+                component, created = find_or_create_component(
+                    vendor, target["raw_model"], kind, created_by=run.submitter,
+                )
         else:
             component, created = silicon_component(
                 vendor, target["raw_model"], kind, created_by=run.submitter,
@@ -2249,7 +2278,10 @@ def find_matching_board(vendor_name: str, model: str):
     from lumina.vendors.services import resolve_vendor
 
     aliased = ReportedIdentityAlias.resolve(vendor_name, model)
-    if isinstance(aliased, Component):
+    # A motherboard, not just any component. An alias is keyed on reported strings, and a custom
+    # build's system strings often mirror its board's, so the same pair can carry a mapping to some
+    # other kind of part - which, returned here, would be tied on as the machine's board.
+    if isinstance(aliased, Component) and aliased.kind == ComponentKind.motherboard.value:
         return aliased
     if not (vendor_name or "").strip() or not (model or "").strip():
         return None
@@ -3103,10 +3135,16 @@ def create_listings_from_run(run: TestRun, *, by) -> list:
             raise ReviewError(
                 "The run has no motherboard vendor/model to create from."
             )
-        board, board_created = find_or_create_component(
-            _vendor_for(board_vendor), board_model,
-            ComponentKind.motherboard, created_by=run.submitter,
-        )
+        # The board a human already identified, when the name being resolved is the one the
+        # machine reported. A name somebody typed instead is theirs to resolve.
+        reported = board_model.strip().casefold() == (run.board_model or "").strip().casefold()
+        board = known_board(run) if reported else None
+        board_created = False
+        if board is None:
+            board, board_created = find_or_create_component(
+                _vendor_for(board_vendor), board_model,
+                ComponentKind.motherboard, created_by=run.submitter,
+            )
         if board is not None:
             if board_created:
                 # Descriptive fields only a human could supply.
