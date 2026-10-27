@@ -140,7 +140,9 @@ magnitude cue riding a table that stays readable and copyable.
                   <span class="text-secondary">{{ row.unit }}</span>
                 </td>
                 <td>{% if row.run.alma_release %}{{ row.run.alma_release.major }}{% if row.run.alma_minor %}.{{ row.run.alma_minor }}{% endif %}{% endif %}</td>
-                <td class="text-secondary small">{{ row.run.submitter.username }}</td>
+                {% comment %}``public_submitter_name``: a public leaderboard, and a benchmark score
+                   is the thing the anonymity option exists for most.{% endcomment %}
+                <td class="text-secondary small">{{ row.run.public_submitter_name }}</td>
                 <td class="text-end"><a href="{{ row.run.get_absolute_url }}" class="small">run</a></td>
               </tr>
             {% empty %}

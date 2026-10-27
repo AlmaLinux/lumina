@@ -275,7 +275,12 @@
                   <span class="badge badge-validation badge-{{ run.trust_level }}">
                     {{ run.trust_level|level_short }}
                   </span>
-                  <span class="text-secondary small">{{ run.submitter.username }}</span>
+                  {% comment %}``public_submitter_name``, never the username. This table renders
+                     on component pages as well as system ones, so reading the username here
+                     named an anonymous submitter against every part their machine was
+                     certified with - while the run page itself said "Anonymous". Reviewers
+                     who need the real name have it on the run, one click away.{% endcomment %}
+                  <span class="text-secondary small">{{ run.public_submitter_name }}</span>
                 </td>
                 {% comment %}``tallied_statuses``, not ``status_counts`` - the
                    property runs its own query, which was one per row. The view
