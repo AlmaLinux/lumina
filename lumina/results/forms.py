@@ -1444,6 +1444,38 @@ class RunComponentTiesForm(ComponentTiesMixin, forms.Form):
         bootstrapify(self)
 
 
+class RunSeparateForm(forms.Form):
+    """What to call a run's machine once it stops being evidence for the listing it matched.
+
+    Asked in the same step as the separation rather than afterwards, because the name is the
+    whole point: the run matched that listing *because* it reports the same vendor and model, so
+    left alone it would be created under the identical name - two listings nobody reading the
+    catalog could tell apart.
+    """
+
+    vendor_name = forms.CharField(
+        max_length=120, label="Vendor",
+        help_text="Who sells this machine. For a rebadged chassis, the integrator rather than "
+                  "the maker of the board.",
+    )
+    name = forms.CharField(
+        max_length=200, label="Displayed name",
+        help_text="Must differ from the listing it is being separated from.",
+    )
+    model_number = forms.CharField(max_length=120, required=False, label="Model number")
+
+    def __init__(self, *args, run=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if run is not None and not self.is_bound:
+            proposal = run.listing_proposal or {}
+            reported = dict(zip(
+                ("vendor_name", "name", "model_number"),
+                reported_machine_identity(run), strict=True))
+            for field in self.fields:
+                self.fields[field].initial = proposal.get(field) or reported.get(field) or ""
+        bootstrapify(self)
+
+
 class RunListingAssignForm(forms.Form):
     """Reviewer links a run to catalog listings before approving it.
 

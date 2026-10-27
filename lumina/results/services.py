@@ -1068,6 +1068,15 @@ def record_identity_alias(run: TestRun, listing, *, by=None) -> object | None:
     # SKU, not hardware, and a scoped run never claimed the machine in the first place.
     if run.is_scoped:
         return None
+    # Nor from a run whose identity is disputed - by its submitter, or by a reviewer separating
+    # it. A dispute is the statement that these firmware strings do *not* identify one machine;
+    # an alias is the statement that they do. Recording one anyway was a hijack: aliases are
+    # consulted before name matching, so the alias mapping the shared strings to the new listing
+    # sent every later run of the *original* machine there instead. A reviewer splitting an
+    # integrator's rebadge off a PowerEdge would have filed every genuine PowerEdge after it
+    # under the integrator.
+    if run.identity_disputed:
+        return None
 
     identities = reported_identities(run)
     if not identities:
@@ -2551,6 +2560,196 @@ def unwaive_result(result: TestResult, *, by) -> TestResult:
     return result
 
 
+def can_separate(run: TestRun) -> bool:
+    """Whether ``separate_run_from_listing`` would accept this run.
+
+    Asked by the review page before it offers the control, so a reviewer is never shown a button
+    that can only answer with a refusal. The service still checks for itself, with the reasons.
+    """
+    if run.is_scoped or run.effective_system_kind == SystemKind.CUSTOM:
+        return False
+    return isinstance(existing_listing_for(run), System)
+
+
+def separate_run_from_listing(run: TestRun, *, by, identity: dict | None = None) -> TestRun:
+    """Make a run its own machine rather than evidence for the System it was matched to.
+
+    Identity matching is a heuristic over firmware strings, and two different machines can
+    report the same vendor and model - a rebadge, a barebones chassis several integrators sell,
+    a DMI table nobody filled in. ``identity_disputed`` already turned such a run back into new
+    hardware everywhere it is consulted; but only the *submitter* could set it. A reviewer who
+    could see the match was wrong had no way to say so, and clearing the system picker did not
+    help either - approval simply matched the same listing again.
+
+    Before approval this is that flag and nothing more: the run unlinks, the identity boxes come
+    back for the reviewer to name the machine, and approval creates the listing.
+
+    After approval the run has already been counted, so its evidence is moved rather than just
+    pointed elsewhere. Its attestation on the old System is withdrawn and that System re-derived,
+    its parts are detached from the old System where no other run of it ties them, the identity
+    alias it recorded is forgotten so the next run of the same strings is not sent back, and a
+    listing is created for it and certified the way approval would have.
+
+    Refused for a custom build. Its machine listing is its motherboard - one System per board is
+    the design, so every build on a board aggregates in one place - and a second System for the
+    same board would break exactly that. If the run is really a vendor-built machine misread as
+    a custom build, correcting its kind gives it a listing of its own.
+    """
+    if run.is_scoped:
+        raise ReviewError(
+            "This run is evidence for its " + " and ".join(run.scope_labels)
+            + " only, so it has no system listing to separate from."
+        )
+    old = existing_listing_for(run)
+    if not isinstance(old, System):
+        raise ReviewError("This run is not matched to an existing system listing.")
+    if run.effective_system_kind == SystemKind.CUSTOM:
+        raise ReviewError(
+            "A custom build is listed under its motherboard, and every build on that board shares "
+            "the one listing. If this is really a vendor-built machine, correct its kind to "
+            "vendor-built and name it, and it gets a listing of its own."
+        )
+
+    with transaction.atomic():
+        correct_identity(run, by=by, identity=identity)
+        proposal = run.listing_proposal or {}
+        vendor = (proposal.get("vendor_name") or run.system_vendor or "").strip()
+        name = (proposal.get("name") or run.system_product or "").strip()
+        # Two listings the catalog cannot tell apart by name are not two listings to anyone
+        # reading it: whichever a search lands on, the reader cannot know it is the other one.
+        # Separating is a statement that this machine is *different*, so it has to be called
+        # something different.
+        if name.casefold() == old.name.casefold() and (
+            resolve_vendor(vendor) == old.vendor or vendor.casefold() == old.vendor.name.casefold()
+        ):
+            raise ReviewError(
+                f"Give this machine a name that tells it apart from {old}. Two listings with the "
+                "same vendor and name are indistinguishable to anyone reading the catalog."
+            )
+
+        approved = run.status == TestRun.STATUS_APPROVED
+        run.identity_disputed = True
+        run.listing_system = None
+        run.save(update_fields=["identity_disputed", "listing_system", "listing_proposal"])
+
+        withdrawn = 0
+        if approved:
+            withdrawn = _withdraw_from_listing(run, old)
+
+        created = []
+        if approved:
+            created = create_listings_from_run(run, by=by)
+            # ``create_listings_from_run`` attests the new System but does not tie the run's
+            # parts to it - approval does that through ``ensure_component_ties``. Replayed here
+            # so the new listing ends up as it would have had it been created at approval.
+            if not run.is_embargoed:
+                apply_run_certification(run)
+
+    log_action(
+        "test_run.separated", target=run, actor=by,
+        before={"listing": str(old), "listing_pk": old.pk},
+        after={"approved": approved, "attestations_withdrawn": withdrawn,
+               "listings": [str(listing) for listing in created]},
+    )
+    return run
+
+
+def _withdraw_from_listing(run: TestRun, old: System) -> int:
+    """Take an approved run's evidence back off a System, and return how many attestations went.
+
+    The run stays approved and its *parts* keep their attestations: separating says the machine
+    was misidentified, not that the hardware failed, so the CPU it certified is still certified.
+    """
+    from lumina.hardware.models import CommunityAttestation
+    from lumina.results.models import ReportedIdentityAlias
+
+    withdrawn, _ = CommunityAttestation.objects.filter(
+        test_run=run, listing_system=old).delete()
+
+    # A release row left with nothing behind it reverts to a declaration rather than being
+    # deleted. ``recompute_listing_levels`` already treats an unattested release as one, and the
+    # row cannot say whether it was a vendor's declaration this run later upgraded: deleting it
+    # could destroy a real claim, while leaving it marked as run-proven would claim evidence that
+    # is no longer there.
+    for version in old.versions.filter(source=ListingVersion.SOURCE_RUN):
+        if not version.attestations.exists():
+            version.source = ListingVersion.SOURCE_DECLARED
+            version.save(update_fields=["source"])
+
+    # The mapping this run taught the catalog, now known to be wrong. Only this run's: an alias
+    # another run recorded is that run's evidence about the old System, and is not ours to undo.
+    ReportedIdentityAlias.objects.filter(source_run=run, listing_system=old).delete()
+
+    # Parts leave the old System only where no other approved run of it ties them. The related
+    # set is the union of every run's evidence, so removing a part another run still vouches for
+    # would erase that run's statement along with this one's.
+    others = TestRun.objects.filter(
+        listing_system=old, status=TestRun.STATUS_APPROVED).exclude(pk=run.pk)
+    for component in run.listing_components.all():
+        if others.filter(listing_components=component).exists():
+            continue
+        old.related_components.remove(component)
+        old.cpus.remove(component)
+
+    recompute_listing_levels(old)
+    old.refresh_from_db()
+    # An unattested listing has nothing public behind it - publishing is what ``_attest_one``
+    # does, so the reverse is ours to do when the last attestation leaves.
+    if old.attestation_count == 0 and old.published:
+        old.published = False
+        old.save(update_fields=["published"])
+    return withdrawn
+
+
+def correct_identity(run: TestRun, *, by, machine_kind: str = "",
+                     identity: dict | None = None) -> bool:
+    """Write a reviewer's correction of the machine's identity into the run's proposal.
+
+    Sets ``run.listing_proposal`` without saving it, and returns whether anything changed, so a
+    caller saving other fields can fold this into the same write.
+
+    Into the proposal rather than onto the run, because the proposal is what
+    ``create_listings_from_run`` reads and what ``record_identity_alias`` then keys the mapping
+    on - so one edit both names the listing approval creates and teaches the catalog what these
+    firmware strings mean, with no second path to keep in step.
+
+    One function because two actions make this correction - assigning a listing and separating
+    a run from one - and the rule about blanks below is the kind of thing that drifts when it is
+    written twice.
+    """
+    proposal = dict(run.listing_proposal or {})
+    changed = {}
+    if machine_kind in (SystemKind.PREBUILT, SystemKind.CUSTOM):
+        # Recorded on the run so the alias can carry it: a machine whose
+        # firmware misidentifies it needs the correction to outlive this run.
+        if proposal.get("machine_kind") != machine_kind:
+            changed["machine_kind"] = machine_kind
+        proposal["machine_kind"] = machine_kind
+    for field, value in (identity or {}).items():
+        value = (value or "").strip()
+        # Blank is "leave it alone" for the two that name the machine, and a real answer for
+        # the part code. A machine has to be called something, so emptying the vendor or the
+        # name is a slip rather than a decision - there is no listing to create at the end of
+        # it. A part code is genuinely optional, and clearing one the submitter guessed at is
+        # the only way to get rid of it.
+        if not value and field in ("vendor_name", "name"):
+            continue
+        if proposal.get(field, "") != value:
+            changed[field] = value
+        proposal[field] = value
+    if not changed:
+        return False
+    run.listing_proposal = proposal
+    log_action(
+        "test_run.identity_corrected", target=run, actor=by,
+        after={"corrected": changed,
+               "reported": dict(zip(
+                   ("vendor_name", "name", "model_number"),
+                   reported_machine_identity(run), strict=True))},
+    )
+    return True
+
+
 def assign_listing(
     run: TestRun,
     *,
@@ -2601,41 +2800,8 @@ def assign_listing(
         run.pre_release = bool(pre_release)
         run.publish_requested_date = publish_requested_date
         fields += ["pre_release", "publish_requested_date"]
-    # The machine's identity, corrected by the reviewer. Written into the proposal rather than
-    # onto the run, because the proposal is what ``create_listings_from_run`` reads and what
-    # ``record_identity_alias`` then keys the mapping on - so one edit here both names the
-    # listing approval creates and teaches the catalog what these firmware strings mean, with
-    # no second path to keep in step.
-    proposal = dict(run.listing_proposal or {})
-    changed_identity = {}
-    if machine_kind in (SystemKind.PREBUILT, SystemKind.CUSTOM):
-        # Recorded on the run so the alias can carry it: a machine whose
-        # firmware misidentifies it needs the correction to outlive this run.
-        if proposal.get("machine_kind") != machine_kind:
-            changed_identity["machine_kind"] = machine_kind
-        proposal["machine_kind"] = machine_kind
-    for field, value in (identity or {}).items():
-        value = (value or "").strip()
-        # Blank is "leave it alone" for the two that name the machine, and a real answer for
-        # the part code. A machine has to be called something, so emptying the vendor or the
-        # name is a slip rather than a decision - there is no listing to create at the end of
-        # it. A part code is genuinely optional, and clearing one the submitter guessed at is
-        # the only way to get rid of it.
-        if not value and field in ("vendor_name", "name"):
-            continue
-        if proposal.get(field, "") != value:
-            changed_identity[field] = value
-        proposal[field] = value
-    if changed_identity:
-        run.listing_proposal = proposal
+    if correct_identity(run, by=by, machine_kind=machine_kind, identity=identity):
         fields.append("listing_proposal")
-        log_action(
-            "test_run.identity_corrected", target=run, actor=by,
-            after={"corrected": changed_identity,
-                   "reported": dict(zip(
-                       ("vendor_name", "name", "model_number"),
-                       reported_machine_identity(run), strict=True))},
-        )
     run.save(update_fields=fields)
     # Clearing the embargo on a run that is approved but held is how a hold with no date ends:
     # nothing is scheduled for it, because there is no date to schedule against. Done here so

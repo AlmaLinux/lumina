@@ -16,7 +16,7 @@ from django.views.decorators.http import require_POST
 
 from lumina.audit.services import log_action
 from lumina.results import services
-from lumina.results.forms import RunComponentTiesForm, RunListingAssignForm
+from lumina.results.forms import RunComponentTiesForm, RunListingAssignForm, RunSeparateForm
 from lumina.results.models import RunType, TestResult, TestRun
 from lumina.review.permissions import reviewer_required
 from lumina.review.views import queue_redirect
@@ -71,6 +71,8 @@ def run_detail(request: HttpRequest, pk: int) -> HttpResponse:
             # part appeared twice on one page. ``component_groups`` groups the form's own rows
             # through the same helper the preview used.
             "component_form": RunComponentTiesForm(run=run),
+            # "Not this machine": offered only where it can succeed, before or after approval.
+            "separate_form": RunSeparateForm(run=run) if services.can_separate(run) else None,
         },
     )
 
@@ -385,6 +387,29 @@ def run_approve_group(request: HttpRequest, pk: int) -> HttpResponse:
     if not approved:
         return HttpResponseRedirect(reverse("review:run_detail", args=[run.pk]))
     return queue_redirect(_run_tab(run))
+
+
+@reviewer_required
+@require_POST
+def run_separate_listing(request: HttpRequest, pk: int) -> HttpResponse:
+    """Give a run a listing of its own instead of the System it was matched to."""
+    run = get_object_or_404(TestRun, pk=pk)
+    form = RunSeparateForm(request.POST, run=run)
+    if not form.is_valid():
+        messages.error(request, "Give the machine a vendor and a name to separate it.")
+        return HttpResponseRedirect(reverse("review:run_detail", args=[run.pk]))
+    try:
+        services.separate_run_from_listing(run, by=request.user, identity=form.cleaned_data)
+    except services.ReviewError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(
+            request,
+            "Separated. The run is now evidence for its own listing."
+            if run.status == TestRun.STATUS_APPROVED
+            else "Separated. Approving this run now creates a listing of its own.",
+        )
+    return HttpResponseRedirect(reverse("review:run_detail", args=[run.pk]))
 
 
 @reviewer_required

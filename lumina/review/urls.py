@@ -12,6 +12,8 @@ urlpatterns = [
     path("archive/", views.archive, name="archive"),
     path("runs/<int:pk>/", run_views.run_detail, name="run_detail"),
     path("runs/<int:pk>/assign/", run_views.run_assign_listing, name="run_assign_listing"),
+    path("runs/<int:pk>/separate/", run_views.run_separate_listing,
+         name="run_separate_listing"),
     path("runs/<int:pk>/components/", run_views.run_component_ties,
          name="run_component_ties"),
     path("runs/<int:pk>/blacklist-device/", run_views.run_blacklist_device,

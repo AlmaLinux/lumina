@@ -172,6 +172,46 @@
             it.
           {% endif %}
         </p>
+        {% comment %}"Not this machine." Two machines can report the same vendor and model - a
+           rebadge, a barebones chassis several integrators sell - and the match is a heuristic
+           over firmware strings. The submitter could already say so; a reviewer could not, and
+           clearing the system picker below did nothing, because approval matched the same
+           listing again. Reported twice over: no way to make a pending run a new system, and no
+           way to split an approved one off afterwards. One control does both.
+
+           Behind a disclosure because on an approved run it moves evidence, but labelled with
+           the action itself - the controls that were reported as missing were the ones filed
+           under a heading about something else.{% endcomment %}
+        {% if separate_form %}
+          <div class="mb-2">
+            <input type="checkbox" id="separate-open" class="reveal-toggle visually-hidden">
+            <label class="btn btn-sm btn-link px-0" for="separate-open">
+              <span class="reveal-when-closed">Not this machine? Give it a listing of its own</span>
+              <span class="reveal-when-open">Keep it with {{ effect.listing }}</span>
+            </label>
+            <form method="post" action="{% url 'review:run_separate_listing' run.pk %}"
+                  class="reveal-fields border rounded p-3 mt-1">
+              {% csrf_token %}
+              <p class="small text-secondary mb-2">
+                {% if run.status == "approved" %}
+                  This run's attestation comes off {{ effect.listing }}, which is re-derived from
+                  whatever evidence it has left and unpublished if that is none. A new listing is
+                  created under the name below and certified from this run. Its parts keep their
+                  own certification - the machine was misidentified, not the hardware.
+                {% else %}
+                  The run stops being evidence for {{ effect.listing }}, and approving it creates
+                  a listing of its own under the name below.
+                {% endif %}
+                It matched because it reports the same vendor and model, so it needs a name that
+                tells the two apart.
+              </p>
+              {% for field in separate_form %}
+                {% include "results/_form_field.html" %}
+              {% endfor %}
+              <button class="btn btn-sm btn-outline-primary">Give it its own listing</button>
+            </form>
+          </div>
+        {% endif %}
       {% endif %}
 
       <dl class="row mb-0 small">
