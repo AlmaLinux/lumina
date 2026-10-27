@@ -92,8 +92,6 @@ def existing_listing_for(run: TestRun):
     A custom build is identified by its motherboard, so that is the listing for this
     purpose - the same rule ``missing_submission_details`` applies.
     """
-    from lumina.hardware.models import ComponentKind as _ComponentKind
-
     # A disputed identity makes this new hardware, whatever was matched or linked before. Every
     # caller keys off this - the gate, the identity fields, the attribution list - so one flag
     # turns the whole page back into "describe this machine".
@@ -101,6 +99,19 @@ def existing_listing_for(run: TestRun):
         return None
     if run.listing_system_id:
         return run.listing_system
+    return matched_listing(run)
+
+
+def matched_listing(run: TestRun):
+    """The listing a run's own strings point at, ignoring any link it currently has.
+
+    What approval falls back to once nothing is linked, which is why a reviewer clearing a link
+    is not the same as a reviewer saying "not this machine": when the strings point straight back
+    at the listing that was cleared, approval reattaches it. ``assign_listing`` asks this to tell
+    the two apart.
+    """
+    from lumina.hardware.models import ComponentKind as _ComponentKind
+
     kind = run.effective_system_kind
     if kind == SystemKind.PREBUILT:
         return resolve_reported_system(run)
@@ -2785,6 +2796,35 @@ def assign_listing(
             "This run is evidence for its "
             f"{' and '.join(run.scope_labels)} only, so it cannot be attached to a system "
             "listing. Attach the component instead."
+        )
+    # Clearing a link the run's own strings would restore is not a decision approval can honor.
+    #
+    # Reported as: told a run to be a new system, approved it, and no new system appeared. The
+    # reviewer emptied the system picker, the page showed the run unlinked, and approval matched
+    # the same listing again by its firmware strings - so the change looked made and was silently
+    # undone. It cannot be made this way at all: a new machine needs a name, and the name the
+    # strings give it is the one that matched.
+    #
+    # Refused before anything is written, rather than accepted and reverted at approval. "Resolve
+    # to" covers both routes back: a name match, and an alias - including the one a reviewer's own
+    # manual assignment records, which is why clearing cannot undo a hand-made link either. A
+    # link the strings resolve somewhere else, or nowhere, still clears: there approval lands
+    # somewhere different and the edit means something.
+    if (
+        system is None and run.listing_system_id and not run.is_scoped
+        and not run.identity_disputed and matched_listing(run) == run.listing_system
+    ):
+        raise ReviewError(
+            f"Clearing the system does not separate this run: approval would attach it to "
+            f"{run.listing_system} again, because that is what this machine's firmware strings "
+            "resolve to. "
+            + (
+                "To make it a different machine, use \"Not this machine? Give it a listing of its "
+                "own\" and give it a name that tells the two apart."
+                if can_separate(run) else
+                "A custom build is listed under its motherboard. If this is really a vendor-built "
+                "machine, correct its kind to vendor-built first."
+            )
         )
     run.listing_system = system
     if level:

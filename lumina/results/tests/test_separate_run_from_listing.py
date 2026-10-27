@@ -318,3 +318,149 @@ def test_a_submitter_dispute_does_not_hijack_the_strings_either(poweredge, revie
     later = _run(username="another-poweredge-owner")
 
     assert later.listing_system == poweredge
+
+
+# --- clearing the picker is not separating ---------------------------------------------
+#
+# Reported after the control above shipped: told a run to be a new system, approved it, and no
+# new system appeared. Emptying the system picker under "Attest a different listing" showed the
+# run unlinked, and approval matched the same listing again from its firmware strings - so the
+# change looked made and was undone without a word. It cannot be made that way: a new machine
+# needs a name, and the name the strings give it is the one that matched.
+
+
+def _assign(client, run, **fields):
+    data = {"components": [], "claimed_validation_level": "", "machine_kind": ""}
+    data.update(fields)
+    return client.post(reverse("review:run_assign_listing", args=[run.pk]), data, follow=True)
+
+
+def _said(response) -> str:
+    """The flash messages alone. The page also renders the separate control's own label, so an
+    assertion against the whole body would pass whatever the message said."""
+    return " ".join(str(message) for message in response.context["messages"])
+
+
+def test_clearing_a_link_approval_would_restore_is_refused(client, poweredge, reviewer):
+    """The report, at the step where it went wrong. Refused rather than accepted, because
+    accepting it is what made it look done."""
+    run = _run()
+
+    response = _assign(client, run, system="")
+
+    run.refresh_from_db()
+    assert run.listing_system == poweredge
+    said = _said(response)
+    assert "does not separate this run" in said
+    # And the refusal says which control does.
+    assert "Give it a listing of its own" in said
+
+
+def test_nothing_else_in_that_save_is_half_applied(client, poweredge, reviewer):
+    """The picker shares a form with the embargo. A refusal that still wrote the gate would be
+    a save the reviewer was told failed and that partly happened."""
+    run = _run()
+
+    _assign(client, run, system="", pre_release="on")
+
+    run.refresh_from_db()
+    assert run.pre_release is False
+
+
+def test_approving_after_the_refusal_still_attests_the_match(client, poweredge, reviewer):
+    """Stated end to end, because "nothing changed" is the honest outcome only if the reviewer
+    was told - and the run goes where the page then says it goes."""
+    run = _run()
+    _assign(client, run, system="")
+
+    client.post(reverse("review:run_approve", args=[run.pk]), {})
+
+    run.refresh_from_db()
+    assert run.listing_system == poweredge
+
+
+def test_clearing_a_link_the_strings_do_not_lead_back_to_still_works(
+        client, poweredge, reviewer):
+    """Clearing is only refused when it changes nothing. A run linked to a listing its own
+    strings resolve to nothing at all - linked through a mapping since removed, say - goes back
+    to being new hardware, which is a real edit."""
+    from lumina.vendors.models import Vendor
+
+    elsewhere = System.objects.create(
+        vendor=Vendor.objects.create(name="Elsewhere Co"), name="Unrelated", published=True)
+    run = _run()
+    ReportedIdentityAlias.objects.all().delete()
+    poweredge.delete()
+    run.listing_system = elsewhere
+    run.save(update_fields=["listing_system"])
+    assert services.matched_listing(run) is None, "the premise: nothing leads back"
+
+    response = _assign(client, run, system="")
+
+    run.refresh_from_db()
+    assert run.listing_system is None
+    assert "Listing assignment updated" in _said(response)
+
+
+def test_clearing_cannot_undo_a_manual_assignment_either(client, poweredge, reviewer):
+    """Assigning a listing by hand records an alias - deliberately, as the strongest statement
+    there is about what a machine's strings mean - so clearing it afterwards would be resolved
+    straight back through that alias. Refused for the same reason, and the message does not
+    claim the strings themselves name it."""
+    other = System.objects.create(vendor=poweredge.vendor, name="PowerEdge R660", published=True)
+    run = _run()
+    services.assign_listing(run, system=other, by=reviewer)
+
+    response = _assign(client, run, system="")
+
+    run.refresh_from_db()
+    assert run.listing_system == other
+    assert "resolve to" in _said(response)
+
+
+def test_the_separate_control_is_the_way_through(client, poweredge, reviewer):
+    """And the thing the refusal points at does what the reviewer wanted."""
+    run = _run()
+    _assign(client, run, system="")
+
+    client.post(reverse("review:run_separate_listing", args=[run.pk]), ACME)
+    client.post(reverse("review:run_approve", args=[run.pk]), {})
+
+    run.refresh_from_db()
+    assert run.listing_system.name == "Acme Box 1"
+
+
+def test_a_run_already_approved_onto_the_match_can_still_be_split(client, poweredge, reviewer):
+    """The recovery for anybody who hit this before the refusal existed: their run is approved
+    and attesting the listing it matched, and the split works on approved runs."""
+    run = _approved(poweredge, reviewer)
+
+    client.post(reverse("review:run_separate_listing", args=[run.pk]), ACME)
+
+    run.refresh_from_db()
+    assert run.listing_system.name == "Acme Box 1"
+    poweredge.refresh_from_db()
+    assert poweredge.published is False
+
+
+def test_a_custom_build_is_told_about_the_kind_not_the_separate_control(client, reviewer):
+    """The separate control is not offered on a custom build, so pointing a reviewer at it
+    would send them looking for a button that is not on the page."""
+    def custom(username):
+        run = ingest.ingest_bundle(
+            submitter=User.objects.get_or_create(username=username)[0], source="api",
+            bundle_file=f.as_upload(f.build_bundle(f.make_report(
+                run_types=["validate"], inventory=f.custom_build_inventory(),
+                results=[f.validate_result("validate.cpu.functional")],
+            ))),
+        )
+        return release(TestRun.objects.get(pk=run.pk))
+
+    services.approve_run(custom("first-builder"), by=reviewer)
+    run = custom("second-builder")
+    assert run.listing_system is not None, "the premise: linked to the board's System"
+
+    said = _said(_assign(client, run, system=""))
+
+    assert "correct its kind to vendor-built" in said
+    assert "Give it a listing of its own" not in said

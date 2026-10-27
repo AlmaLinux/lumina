@@ -99,7 +99,12 @@ def run_assign_listing(request: HttpRequest, pk: int) -> HttpResponse:
     # apply any rule that depends on the run: it rebuilt every field including the System picker, so
     # a scoped run's POST still carried a System and was only stopped by ``assign_listing`` raising.
     form = RunListingAssignForm(request.POST, run=run)
-    if form.is_valid():
+    if not form.is_valid():
+        messages.error(request, "Could not update the assignment.")
+        return HttpResponseRedirect(reverse("review:run_detail", args=[run.pk]))
+    # ``assign_listing`` refuses edits it cannot honor - a system on a scoped run, a cleared link
+    # approval would restore - and those are answers for the reviewer, not server errors.
+    try:
         services.assign_listing(
             run,
             # ``.get`` because the fields are removed outright for a scoped run, so they are absent
@@ -126,9 +131,10 @@ def run_assign_listing(request: HttpRequest, pk: int) -> HttpResponse:
             set_embargo=True,
             by=request.user,
         )
-        messages.success(request, "Listing assignment updated.")
+    except services.ReviewError as exc:
+        messages.error(request, str(exc))
     else:
-        messages.error(request, "Could not update the assignment.")
+        messages.success(request, "Listing assignment updated.")
     return HttpResponseRedirect(reverse("review:run_detail", args=[run.pk]))
 
 
