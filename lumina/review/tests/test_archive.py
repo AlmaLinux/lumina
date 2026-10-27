@@ -430,3 +430,78 @@ def test_the_archive_renders_a_way_to_the_next_page(client, dell, submitter, rev
     body = _archive(client).content.decode()
 
     assert "page_decisions=2" in body
+
+
+# --- every kind renders -----------------------------------------------------------
+
+
+def _decided_of_every_kind(submitter, reviewer) -> None:
+    """One approved and one rejected row of every reviewable model the archive reads."""
+    from lumina.hardware.models import ListingEditProposal
+    from lumina.software.models import Software, SoftwareEditProposal, SoftwareSubmission
+    from lumina.survey.models import SurveyTokenRequest
+    from lumina.vendors.models import VendorClaim, VendorProposal
+
+    vendor = Vendor.objects.create(name="Every Kind Co")
+    software = Software.objects.create(vendor=vendor, name="Every Kind Tool")
+    system = System.objects.create(vendor=vendor, name="Every Kind Box")
+    decided = dict(reviewed_by=reviewer, reviewed_at=timezone.now(), reviewer_notes="noted")
+    for status in (Submission.STATUS_APPROVED, Submission.STATUS_REJECTED):
+        SoftwareSubmission.objects.create(
+            submitter=submitter, software=software, status=status, **decided)
+        SoftwareEditProposal.objects.create(
+            software=software, proposed_by=submitter, status=status, **decided)
+        ListingEditProposal.objects.create(
+            proposed_by=submitter, listing_system=system, status=status, **decided)
+        VendorProposal.objects.create(
+            kind="create", proposed_by=submitter, name="Proposed Co", status=status, **decided)
+        VendorClaim.objects.create(
+            vendor=vendor, requester=submitter, work_email="claim@example.org",
+            role_at_vendor="QA", status=status, **decided)
+        SurveyTokenRequest.objects.create(
+            requester=submitter, justification="fleet", status=status, **decided)
+
+
+def test_a_decided_row_of_every_kind_renders(client, dell, submitter, reviewer):
+    """The archive returned a 500 for every reviewer once the first listing edit was decided.
+
+    Its source had been copied from the hardware submission's, which reads ``o.listing``;
+    ``ListingEditProposal`` names the same thing ``target``, so the subject raised
+    AttributeError. Every test passed because none of them ever decided a listing edit -
+    ``test_the_source_list_covers_every_reviewable_model`` proves each model is *listed* as a
+    source, which says nothing about whether its row can be drawn.
+
+    So this decides one of every kind and renders the page, which is the check that would
+    have failed.
+    """
+    _decided_submission(dell, submitter, reviewer)
+    _decided_of_every_kind(submitter, reviewer)
+
+    response = client.get(reverse("review:archive"))
+
+    assert response.status_code == 200
+    shown = {row["kind"] for row in response.context["decisions"].page}
+    assert shown >= set(decision_kinds()) - {"Validation run"}
+
+
+def test_a_listing_edit_is_named_by_the_listing_it_edits(dell, submitter, reviewer):
+    """Rendering is not enough: the subject has to be the listing, not a fallback string."""
+    _decided_of_every_kind(submitter, reviewer)
+
+    edits = [row for row in decisions() if row["kind"] == "Listing edit"]
+
+    assert edits and all("Every Kind Box" in row["subject"] for row in edits)
+
+
+@pytest.mark.parametrize("label", decision_kinds())
+def test_every_source_can_describe_its_subject(label, dell, submitter, reviewer):
+    """Per source, so the next one added with a borrowed accessor fails by name rather than
+    taking the whole page down for everybody."""
+    from lumina.review.archive import _sources
+
+    _decided_submission(dell, submitter, reviewer)
+    _decided_of_every_kind(submitter, reviewer)
+    source = next(s for s in _sources() if s.label == label)
+
+    for obj in source.queryset():
+        assert isinstance(source.subject(obj), str)

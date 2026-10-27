@@ -90,7 +90,11 @@ def _sources() -> list[Source]:
             lambda: ListingEditProposal.objects.filter(
                 status__in=decided
             ).select_related("reviewed_by", "listing_system", "listing_component"),
-            lambda o: str(o.listing) if o.listing else "(listing deleted)",
+            # ``target``, not ``listing``. This was copied from the hardware-submission source
+            # above, and ``Submission`` names it ``listing`` where ``ListingEditProposal`` names
+            # it ``target`` - so the archive raised AttributeError, and returned a 500 for every
+            # reviewer, from the moment the first listing edit was decided.
+            lambda o: str(o.target) if o.target else "(listing deleted)",
             "review:listing_edit_detail",
         ),
         Source(
